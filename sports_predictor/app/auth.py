@@ -33,14 +33,14 @@ def _h(pw: str) -> str:
 # Change these before deploying. Admin is you; add viewers as needed.
 USERS: dict[str, dict] = {
     "admin": {
-        "password_hash": _h("admin123"),   # ← CHANGE THIS PASSWORD
+        "password_hash": "ba82e16f506cb41712bbe4ddf697e8dfce1c2b2c4a22466fbd7841d9a47ae824",   # ← CHANGE THIS PASSWORD
         "role":          "admin",
         "display_name":  "Admin",
     },
-    "viewer": {
-        "password_hash": _h("viewer123"),  # ← CHANGE THIS PASSWORD
+    "churm": {
+        "password_hash": _h("churm"),  # ← CHANGE THIS PASSWORD
         "role":          "viewer",
-        "display_name":  "Viewer",
+        "display_name":  "Churm",
     },
     # Add more viewers:
     # "alice": {"password_hash": _h("alicepass"), "role": "viewer", "display_name": "Alice"},

@@ -98,8 +98,7 @@ def render_nhl(selected_date_str, force_retrain):
         pb.empty(); stxt.empty()
         st.rerun()
 
-
-        preds    = st.session_state.nhl_predictions
+    preds    = st.session_state.nhl_predictions
     pipeline = st.session_state.nhl_pipeline
     games    = st.session_state.nhl_games
 

@@ -4,6 +4,7 @@ nba_pipeline.py — NBA data pipeline: schedule → rosters → logs → train �
 
 import os, time
 from datetime import datetime
+from math import erf, sqrt
 from typing import Optional
 
 import numpy as np

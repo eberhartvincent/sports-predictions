@@ -37,10 +37,7 @@ def render_nhl(selected_date_str, force_retrain):
         if k not in st.session_state:
             st.session_state[k] = v
 
-    import os
-
-    import os
-    from app.prediction_store import load_predictions, predictions_exist, last_updated
+    from app.prediction_store import load_predictions, last_updated
 
     # ── Load from pre-computed predictions first (instant) ────────────────────
     # warm_cache.py saves predictions daily — just read the files.

@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 .env
@@ -7,3 +8,16 @@ __pycache__/
 Thumbs.db
 *.log
 logs/*.log
+
+# API and model caches — kept in GitHub Actions cache, not git history
+# This prevents thousands of JSON files bloating the repo
+data/cache/nhl/
+data/cache/mlb/
+data/cache/nba/
+data/cache/model/
+
+# Prediction files ARE tracked (committed daily by workflow)
+!data/cache/predictions/
+!data/cache/predictions/*.parquet
+!data/cache/predictions/*.json
+!data/cache/predictions/.gitkeep

@@ -5,7 +5,6 @@ Run:  streamlit run main.py
 
 import compat  # noqa — must be first
 
-import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -13,7 +12,6 @@ import streamlit as st
 import pandas as pd
 
 from app.auth import require_auth, is_admin, current_user, logout
-from config.settings import CURRENT_SEASON
 
 st.set_page_config(
     page_title="Sports Predictor",
@@ -83,10 +81,15 @@ with st.sidebar:
 
     if picked_date != st.session_state.selected_date:
         st.session_state.selected_date    = picked_date
-        st.session_state.nhl_predictions  = pd.DataFrame()
-        st.session_state.nhl_pipeline     = None
-        st.session_state.nhl_games        = []
-        st.session_state.nhl_teams        = []
+        # Reset all sports so they reload for the new date
+        for _k in ["nhl_predictions","nhl_pipeline","nhl_games","nhl_teams",
+                   "nhl_auto_loaded","nhl_last_run",
+                   "mlb_preds","mlb_pipeline","mlb_games","mlb_teams","mlb_last_run",
+                   "nba_preds","nba_pipeline","nba_games","nba_teams","nba_last_run"]:
+            if _k in st.session_state:
+                st.session_state[_k] = pd.DataFrame() if "pred" in _k or _k=="mlb_preds" or _k=="nba_preds" else (
+                    None if "pipeline" in _k or "last_run" in _k else
+                    False if _k=="nhl_auto_loaded" else [])
 
     st.caption(f"Showing **{'Today' if picked_date==today_et else picked_date.strftime('%b %d, %Y')}**")
     st.divider()

@@ -30,7 +30,6 @@ def render_nba(selected_date: str, force_retrain: bool):
         if k not in st.session_state: st.session_state[k]=v
 
 
-    # ── Auto-load from warm cache on first visit ──────────────────────────────
     from app.prediction_store import load_predictions, last_updated
 
     # ── Load from pre-computed predictions (instant) ──────────────────────────

@@ -352,7 +352,7 @@ class MLBPipeline:
                     try:
                         # Force short TTL so IL moves are caught within 30 min
                         from mlb_api import _get as mlb_get, _save as mlb_save, _load as mlb_load
-                        from config import MLB_CACHE_DIR as MLB_CACHE, MLB_TEAMS
+                        from config import MLB_CACHE_DIR as MLB_CACHE
                         key = f"mlb_roster_{tid}_{SEASON}_active"
                         cached = mlb_load(key, ttl=30)
                         if cached:

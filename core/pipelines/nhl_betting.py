@@ -9,6 +9,7 @@ Uses aggregated player-level predictions + team season stats to project:
 All projections are model-based estimates, NOT official betting lines.
 """
 
+from math import exp, factorial
 import numpy as np
 import pandas as pd
 from typing import Optional
@@ -393,8 +394,7 @@ def _poisson_win_prob(lambda_a: float, lambda_h: float,
     Compute win/draw/loss probabilities using independent Poisson distributions.
     Returns (away_win, home_win, tie).
     """
-    from math import exp, factorial
-
+    
     def poisson_pmf(k, lam):
         return (lam ** k) * exp(-lam) / factorial(k)
 
@@ -414,8 +414,7 @@ def _poisson_win_prob(lambda_a: float, lambda_h: float,
 
 def _poisson_over_prob(total_lambda: float, line: float) -> float:
     """Probability that total goals > line using Poisson distribution."""
-    from math import exp, factorial
-
+    
     under_prob = 0.0
     k = 0
     while k <= int(line):
@@ -436,8 +435,7 @@ def _spread_cover_prob(fav_xg: float, dog_xg: float,
     """
     Probability that the favoured team wins by more than spread_line goals.
     """
-    from math import exp, factorial
-
+    
     def poisson_pmf(k, lam):
         return (lam ** k) * exp(-lam) / factorial(k)
 

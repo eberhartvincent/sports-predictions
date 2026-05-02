@@ -38,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Restore previous caches
+      - name: Restore API and model caches (not committed to git)
         uses: actions/cache@v4
         with:
           path: |
@@ -46,7 +46,6 @@ jobs:
             data/cache/mlb/
             data/cache/nba/
             data/cache/model/
-            data/cache/predictions/
           key: sport-caches-${{ github.run_id }}
           restore-keys: sport-caches-
 
@@ -55,13 +54,11 @@ jobs:
           SPORT="${{ github.event.inputs.sport || 'all' }}"
           DATE=$(TZ="America/New_York" date +%Y-%m-%d)
           echo "Warming: sport=$SPORT  date=$DATE"
-          # Set PYTHONPATH so compat.py can find all modules
-          export PYTHONPATH="${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}/config:${GITHUB_WORKSPACE}/core/pipelines:${GITHUB_WORKSPACE}/core/models:${GITHUB_WORKSPACE}/core/features:${GITHUB_WORKSPACE}/data/api:${GITHUB_WORKSPACE}/app/tabs:${GITHUB_WORKSPACE}/scripts"
           python scripts/warm_cache.py --sport "$SPORT" --date "$DATE"
-          echo "--- Prediction files created ---"
-          ls -la data/cache/predictions/ || echo "No predictions dir"
+          echo "--- Prediction files ---"
+          ls -lh data/cache/predictions/ 2>/dev/null || echo "No predictions dir"
 
-      - name: Save caches
+      - name: Save API and model caches for next run
         uses: actions/cache@v4
         with:
           path: |
@@ -69,19 +66,23 @@ jobs:
             data/cache/mlb/
             data/cache/nba/
             data/cache/model/
-            data/cache/predictions/
           key: sport-caches-${{ github.run_id }}
 
-      - name: Commit predictions to repo
+      - name: Commit only prediction files to repo
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Force-add cache dirs including predictions
-          git add -f data/cache/ 2>/dev/null || true
+
+          # Only add the final prediction files — not API caches or model files
+          git add -f data/cache/predictions/*.parquet 2>/dev/null || true
+          git add -f data/cache/predictions/*.json    2>/dev/null || true
+
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "No prediction changes to commit"
           else
+            echo "Committing prediction files:"
+            git diff --staged --name-only
             DATE=$(TZ="America/New_York" date +%Y-%m-%d)
-            git commit -m "chore: daily predictions ${DATE} [skip ci]"
+            git commit -m "chore: predictions ${DATE} [skip ci]"
             git push
           fi

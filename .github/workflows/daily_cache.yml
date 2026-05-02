@@ -10,6 +10,9 @@ on:
         required: false
         default: "all"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   warm-cache:
     runs-on: ubuntu-latest

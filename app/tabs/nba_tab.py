@@ -31,13 +31,22 @@ def render_nba(selected_date: str, force_retrain: bool):
 
 
     # ── Auto-load from warm cache on first visit ──────────────────────────────
-    if not st.session_state.get("nba_auto_loaded", False) and \
-       st.session_state.nba_preds.empty:
-        st.session_state["nba_auto_loaded"] = True
-        st.session_state.nba_running = True
-        st.rerun()
+    from app.prediction_store import load_predictions, last_updated
 
-    if is_admin() and st.button("🏀 Load / Refresh NBA Predictions", type="primary",
+    # ── Load from pre-computed predictions (instant) ──────────────────────────
+    if st.session_state.nba_preds.empty:
+        stored = load_predictions("nba")
+        if not stored["predictions"].empty:
+            st.session_state.nba_preds      = stored["predictions"]
+            st.session_state.nba_games      = stored["games"]
+            st.session_state.nba_teams      = sorted(
+                stored["predictions"]["team"].dropna().unique().tolist()
+            ) if "team" in stored["predictions"].columns else []
+            st.session_state._nba_game_proj = stored["game_projections"]
+            st.session_state.nba_last_run   = last_updated("nba") or "pre-computed"
+
+    # ── Admin: refresh button ─────────────────────────────────────────────────
+    if is_admin() and st.button("🏀 Refresh NBA Predictions", type="primary",
                   use_container_width=True, key="nba_load"):
         st.session_state.nba_running = True
 
@@ -50,16 +59,16 @@ def render_nba(selected_date: str, force_retrain: bool):
                 pipe  = NBAPipeline()
                 preds = pipe.run(force_retrain=force_retrain,
                                  status_callback=upd, date=selected_date)
-                st.session_state.nba_pipeline = pipe
-                st.session_state.nba_preds    = preds
-                st.session_state.nba_games    = pipe.get_games()
-                st.session_state.nba_teams    = pipe.get_teams_playing()
-                st.session_state.nba_last_run = datetime.now(ET).strftime("%I:%M %p ET")
-                pb.progress(1.0); stxt.markdown("✅ **Done!**"); time.sleep(0.6)
+                st.session_state.nba_pipeline  = pipe
+                st.session_state.nba_preds     = preds
+                st.session_state.nba_games     = pipe.games
+                st.session_state.nba_teams     = pipe.get_teams_playing()
+                st.session_state._nba_game_proj= pipe.game_proj
+                st.session_state.nba_last_run  = datetime.now(ET).strftime("%I:%M %p ET")
+                pb.progress(1.0); stxt.markdown("✅ **Done!**"); time.sleep(0.5)
             except Exception as e:
                 st.error(f"NBA Pipeline error: {e}"); st.exception(e)
         pb.empty(); stxt.empty(); st.rerun()
-
     preds    = st.session_state.nba_preds
     pipeline = st.session_state.nba_pipeline
     games    = st.session_state.nba_games
@@ -87,7 +96,7 @@ def render_nba(selected_date: str, force_retrain: bool):
     st.divider()
 
     # ── Game projections ────────────────────────────────────────────────────────
-    gprojs = pipeline.game_proj if pipeline else []
+    gprojs = st.session_state.get('_nba_game_proj', pipeline.game_proj if pipeline else [])
     if gprojs:
         st.markdown("### 🎰 Game Projections")
         st.caption("Model-based estimates — not official lines. Entertainment only.")

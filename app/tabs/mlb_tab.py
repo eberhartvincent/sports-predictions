@@ -51,19 +51,23 @@ def render_mlb(selected_date: str, force_retrain: bool):
             st.session_state[k] = v
 
 
-    # ── Auto-load from warm cache on first visit ──────────────────────────────
-    if not st.session_state.get("mlb_auto_loaded", False) and \
-       st.session_state.mlb_preds.empty:
-        st.session_state["mlb_auto_loaded"] = True
-        import os
-        cache_dir = "data/cache/mlb"
-        cache_files = os.listdir(cache_dir) if os.path.exists(cache_dir) else []
-        model_files = [f for f in os.listdir("data/cache/model")
-                       if "mlb" in f.lower()] \
-                      if os.path.exists("data/cache/model") else []
-        st.session_state.mlb_running = True  # always auto-load on first visit
+    from app.prediction_store import load_predictions, last_updated
 
-    if is_admin() and st.button("⚾ Load / Refresh MLB Predictions", type="primary",
+    # ── Load from pre-computed predictions (instant) ──────────────────────────
+    if st.session_state.mlb_preds.empty:
+        stored = load_predictions("mlb")
+        if not stored["predictions"].empty:
+            st.session_state.mlb_preds         = stored["predictions"]
+            st.session_state.mlb_pitcher_preds = stored["pitcher_predictions"]
+            st.session_state.mlb_games         = stored["games"]
+            st.session_state.mlb_teams         = sorted(
+                stored["predictions"]["team"].dropna().unique().tolist()
+            ) if "team" in stored["predictions"].columns else []
+            st.session_state._mlb_game_proj    = stored["game_projections"]
+            st.session_state.mlb_last_run      = last_updated("mlb") or "pre-computed"
+
+    # ── Admin: refresh button ─────────────────────────────────────────────────
+    if is_admin() and st.button("⚾ Refresh MLB Predictions", type="primary",
                   use_container_width=True, key="mlb_load"):
         st.session_state.mlb_running = True
 
@@ -79,9 +83,10 @@ def render_mlb(selected_date: str, force_retrain: bool):
                                  status_callback=upd, date=selected_date)
                 st.session_state.mlb_pipeline      = pipe
                 st.session_state.mlb_preds         = preds
-                st.session_state.mlb_pitcher_preds = getattr(pipe, "pitcher_predictions", pd.DataFrame())
+                st.session_state.mlb_pitcher_preds = getattr(pipe,"pitcher_predictions",pd.DataFrame())
                 st.session_state.mlb_games         = pipe.get_games()
                 st.session_state.mlb_teams         = pipe.get_teams_playing()
+                st.session_state._mlb_game_proj    = pipe.game_proj
                 st.session_state.mlb_last_run      = datetime.now(ET).strftime("%I:%M %p ET")
                 pb.progress(1.0); stxt.markdown("✅ **Done!**"); time.sleep(0.5)
             except Exception as e:

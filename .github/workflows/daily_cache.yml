@@ -2,7 +2,7 @@ name: Daily Cache Warm
 
 on:
   schedule:
-    - cron: "0 15 * * *"    # 11:00 AM ET / 15:00 UTC
+    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       sport:
@@ -10,29 +10,25 @@ on:
         required: false
         default: "all"
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   warm-cache:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     permissions:
       contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Cache pip packages
+      - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -42,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Restore previous data caches
+      - name: Restore previous caches
         uses: actions/cache@v4
         with:
           path: |
@@ -50,17 +46,18 @@ jobs:
             data/cache/mlb/
             data/cache/nba/
             data/cache/model/
+            data/cache/predictions/
           key: sport-caches-${{ github.run_id }}
           restore-keys: sport-caches-
 
-      - name: Warm caches
+      - name: Warm caches and save predictions
         run: |
           SPORT="${{ github.event.inputs.sport || 'all' }}"
           DATE=$(TZ="America/New_York" date +%Y-%m-%d)
           echo "Warming: sport=$SPORT  date=$DATE"
           python scripts/warm_cache.py --sport "$SPORT" --date "$DATE"
 
-      - name: Save data caches
+      - name: Save caches
         uses: actions/cache@v4
         with:
           path: |
@@ -68,17 +65,18 @@ jobs:
             data/cache/mlb/
             data/cache/nba/
             data/cache/model/
+            data/cache/predictions/
           key: sport-caches-${{ github.run_id }}
 
-      - name: Commit updated caches to repo
+      - name: Commit predictions to repo
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f data/cache/ 2>/dev/null || true
           if git diff --staged --quiet; then
-            echo "No cache changes to commit"
+            echo "No changes to commit"
           else
             DATE=$(TZ="America/New_York" date +%Y-%m-%d)
-            git commit -m "chore: daily cache warm ${DATE} [skip ci]"
+            git commit -m "chore: daily predictions ${DATE} [skip ci]"
             git push
           fi

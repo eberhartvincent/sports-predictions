@@ -39,22 +39,33 @@ def render_nhl(selected_date_str, force_retrain):
 
     import os
 
-    # ── Auto-load on first visit ──────────────────────────────────────────────
-    # Triggers automatically for everyone — no button click needed.
-    # Admin can also manually refresh. Viewers just see the output.
-    if not st.session_state.nhl_auto_loaded and st.session_state.nhl_predictions.empty:
-        st.session_state.nhl_auto_loaded = True
-        st.session_state.nhl_running = True
-        st.rerun()
+    import os
+    from app.prediction_store import load_predictions, predictions_exist, last_updated
 
-    # ── Refresh button — admin only ───────────────────────────────────────────
+    # ── Load from pre-computed predictions first (instant) ────────────────────
+    # warm_cache.py saves predictions daily — just read the files.
+    # Admin can force a fresh run; viewers always see the saved output.
+    if st.session_state.nhl_predictions.empty:
+        stored = load_predictions("nhl")
+        if not stored["predictions"].empty:
+            st.session_state.nhl_predictions  = stored["predictions"]
+            st.session_state.nhl_games        = stored["games"]
+            st.session_state.nhl_teams        = sorted(
+                stored["predictions"]["team"].dropna().unique().tolist()
+            ) if "team" in stored["predictions"].columns else []
+            st.session_state.nhl_pipeline     = None   # no live pipeline object needed
+            st.session_state._nhl_game_proj   = stored["game_projections"]
+            st.session_state._nhl_metrics     = stored["metrics"]
+            st.session_state.nhl_last_run     = last_updated("nhl") or "pre-computed"
+
+    # ── Admin: refresh button to re-run the full pipeline ─────────────────────
     if is_admin():
         if st.button("🏒 Refresh NHL Predictions", type="primary",
                      use_container_width=True, key="nhl_load"):
             st.session_state.nhl_running = True
 
-    # ── Pipeline execution ────────────────────────────────────────────────────
-    if st.session_state.nhl_running:
+    # ── Pipeline execution (admin refresh only) ───────────────────────────────
+    if st.session_state.get("nhl_running", False):
         st.session_state.nhl_running = False
         pb   = st.progress(0.0)
         stxt = st.empty()
@@ -79,13 +90,16 @@ def render_nhl(selected_date_str, force_retrain):
                     sorted(preds["team"].dropna().unique().tolist())
                     if not preds.empty and "team" in preds.columns else []
                 )
+                st.session_state._nhl_game_proj  = pipe.game_projections
+                st.session_state._nhl_metrics    = pipe.model_metrics
                 pb.progress(1.0); stxt.markdown("✅ **Done!**"); time.sleep(0.5)
             except Exception as e:
                 st.error(f"NHL Pipeline error: {e}"); st.exception(e)
         pb.empty(); stxt.empty()
         st.rerun()
 
-    preds    = st.session_state.nhl_predictions
+
+        preds    = st.session_state.nhl_predictions
     pipeline = st.session_state.nhl_pipeline
     games    = st.session_state.nhl_games
 
@@ -111,7 +125,8 @@ def render_nhl(selected_date_str, force_retrain):
                     f'<div class="value">{len(preds)}</div>'
                     f'<div class="sub">skaters with predictions</div></div>', unsafe_allow_html=True)
     with m3:
-        auc = pipeline.model_metrics.get("train_auc", 0) if pipeline and pipeline.model_metrics else 0
+        _metrics = st.session_state.get('_nhl_metrics', pipeline.model_metrics if pipeline and pipeline.model_metrics else {})
+        auc = _metrics.get("train_auc", 0)
         st.markdown(f'<div class="metric-card"><div class="label">Model CV-AUC</div>'
                     f'<div class="value">{auc:.3f}</div>'
                     f'<div class="sub">cross-validated</div></div>', unsafe_allow_html=True)
@@ -148,7 +163,7 @@ def render_nhl(selected_date_str, force_retrain):
         st.divider()
 
     # ── Game projections ──────────────────────────────────────────────────────
-    game_projections = pipeline.game_projections if pipeline else []
+    game_projections = st.session_state.get('_nhl_game_proj', pipeline.game_projections if pipeline else [])
     if game_projections:
         st.markdown("### 🎰 Game Projections")
         st.caption("Model-based estimates — not official betting lines. For entertainment purposes.")

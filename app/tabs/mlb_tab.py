@@ -49,6 +49,20 @@ def render_mlb(selected_date: str, force_retrain: bool):
         if k not in st.session_state:
             st.session_state[k] = v
 
+
+    # ── Auto-load from warm cache on first visit ──────────────────────────────
+    if not st.session_state.get("mlb_auto_loaded", False) and \
+       st.session_state.mlb_preds.empty:
+        st.session_state["mlb_auto_loaded"] = True
+        import os
+        cache_dir = "data/cache/mlb"
+        cache_files = os.listdir(cache_dir) if os.path.exists(cache_dir) else []
+        model_files = [f for f in os.listdir("data/cache/model")
+                       if "mlb" in f.lower()] \
+                      if os.path.exists("data/cache/model") else []
+        if cache_files and model_files:
+            st.session_state.mlb_running = True
+
     if st.button("⚾ Load / Refresh MLB Predictions", type="primary",
                   use_container_width=True, key="mlb_load"):
         st.session_state.mlb_running = True

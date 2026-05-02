@@ -28,6 +28,20 @@ def render_nba(selected_date: str, force_retrain: bool):
                 "nba_games":[],"nba_teams":[]}.items():
         if k not in st.session_state: st.session_state[k]=v
 
+
+    # ── Auto-load from warm cache on first visit ──────────────────────────────
+    if not st.session_state.get("nba_auto_loaded", False) and \
+       st.session_state.nba_preds.empty:
+        st.session_state["nba_auto_loaded"] = True
+        import os
+        cache_dir = "data/cache/nba"
+        cache_files = os.listdir(cache_dir) if os.path.exists(cache_dir) else []
+        model_files = [f for f in os.listdir("data/cache/model")
+                       if "nba" in f.lower()] \
+                      if os.path.exists("data/cache/model") else []
+        if cache_files and model_files:
+            st.session_state.nba_running = True
+
     if st.button("🏀 Load / Refresh NBA Predictions", type="primary",
                   use_container_width=True, key="nba_load"):
         st.session_state.nba_running = True

@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import streamlit as st
+from app.auth import is_admin
 import pandas as pd
 import plotly.graph_objects as go
 from nba_client import NBA_TEAM_NAMES
@@ -39,10 +40,9 @@ def render_nba(selected_date: str, force_retrain: bool):
         model_files = [f for f in os.listdir("data/cache/model")
                        if "nba" in f.lower()] \
                       if os.path.exists("data/cache/model") else []
-        if cache_files and model_files:
-            st.session_state.nba_running = True
+        st.session_state.nba_running = True  # always auto-load on first visit
 
-    if st.button("🏀 Load / Refresh NBA Predictions", type="primary",
+    if is_admin() and st.button("🏀 Load / Refresh NBA Predictions", type="primary",
                   use_container_width=True, key="nba_load"):
         st.session_state.nba_running = True
 

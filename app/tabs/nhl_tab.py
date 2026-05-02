@@ -37,24 +37,20 @@ def render_nhl(selected_date_str, force_retrain):
         if k not in st.session_state:
             st.session_state[k] = v
 
-    # ── Auto-load from warm cache on first visit ──────────────────────────────
-    # If the GitHub Action has already warmed caches, load instantly without
-    # the user having to click the button.
+    import os
+
+    # ── Auto-load on first visit ──────────────────────────────────────────────
+    # Triggers automatically for everyone — no button click needed.
+    # Admin can also manually refresh. Viewers just see the output.
     if not st.session_state.nhl_auto_loaded and st.session_state.nhl_predictions.empty:
         st.session_state.nhl_auto_loaded = True
-        cache_dir = "data/cache/model"
-        import os
-        model_files = [f for f in os.listdir(cache_dir)
-                       if "nhl" in f.lower()] if os.path.exists(cache_dir) else []
-        nhl_cache = "data/cache/nhl"
-        cache_files = os.listdir(nhl_cache) if os.path.exists(nhl_cache) else []
-        if model_files and cache_files:
-            st.session_state.nhl_running = True
-
-    # ── Load / Refresh button (all users) ────────────────────────────────────
-    if st.button("🏒 Load / Refresh NHL Predictions", type="primary",
-                 use_container_width=True, key="nhl_load"):
         st.session_state.nhl_running = True
+
+    # ── Refresh button — admin only ───────────────────────────────────────────
+    if is_admin():
+        if st.button("🏒 Refresh NHL Predictions", type="primary",
+                     use_container_width=True, key="nhl_load"):
+            st.session_state.nhl_running = True
 
     # ── Pipeline execution ────────────────────────────────────────────────────
     if st.session_state.nhl_running:

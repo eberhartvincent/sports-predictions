@@ -5,6 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import streamlit as st
+from app.auth import is_admin
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -60,10 +61,9 @@ def render_mlb(selected_date: str, force_retrain: bool):
         model_files = [f for f in os.listdir("data/cache/model")
                        if "mlb" in f.lower()] \
                       if os.path.exists("data/cache/model") else []
-        if cache_files and model_files:
-            st.session_state.mlb_running = True
+        st.session_state.mlb_running = True  # always auto-load on first visit
 
-    if st.button("⚾ Load / Refresh MLB Predictions", type="primary",
+    if is_admin() and st.button("⚾ Load / Refresh MLB Predictions", type="primary",
                   use_container_width=True, key="mlb_load"):
         st.session_state.mlb_running = True
 

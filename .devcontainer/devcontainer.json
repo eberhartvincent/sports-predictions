@@ -2,7 +2,6 @@
   "name": "Sports Predictor",
   "image": "mcr.microsoft.com/devcontainers/python:3.11",
   "postCreateCommand": "pip install -r requirements.txt",
-  "postStartCommand": "bash .devcontainer/on_start.sh",
   "forwardPorts": [8501],
   "portsAttributes": {
     "8501": {
@@ -10,12 +9,18 @@
       "onAutoForward": "openPreview"
     }
   },
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "installJupyterlab": false
+    }
+  },
   "customizations": {
-    "codespaces": {
-      "openFiles": []
-    },
     "vscode": {
-      "extensions": ["ms-python.python"]
+      "extensions": ["ms-python.python"],
+      "settings": {
+        "task.allowAutomaticTasks": "on",
+        "jupyter.disableJupyterAutoStart": true
+      }
     }
   }
 }

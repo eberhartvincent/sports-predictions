@@ -2,6 +2,7 @@
   "name": "Sports Predictor",
   "image": "mcr.microsoft.com/devcontainers/python:3.11",
   "postCreateCommand": "pip install -r requirements.txt",
+  "postStartCommand": "git pull --ff-only 2>/dev/null || true; nohup streamlit run main.py --server.port 8501 --server.address 0.0.0.0 --server.headless true --server.runOnSave false > /tmp/streamlit.log 2>&1 &",
   "forwardPorts": [8501],
   "portsAttributes": {
     "8501": {
@@ -9,16 +10,10 @@
       "onAutoForward": "openPreview"
     }
   },
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "installJupyterlab": false
-    }
-  },
   "customizations": {
     "vscode": {
       "extensions": ["ms-python.python"],
       "settings": {
-        "task.allowAutomaticTasks": "on",
         "jupyter.disableJupyterAutoStart": true
       }
     }

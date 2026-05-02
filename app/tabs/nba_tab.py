@@ -34,13 +34,8 @@ def render_nba(selected_date: str, force_retrain: bool):
     if not st.session_state.get("nba_auto_loaded", False) and \
        st.session_state.nba_preds.empty:
         st.session_state["nba_auto_loaded"] = True
-        import os
-        cache_dir = "data/cache/nba"
-        cache_files = os.listdir(cache_dir) if os.path.exists(cache_dir) else []
-        model_files = [f for f in os.listdir("data/cache/model")
-                       if "nba" in f.lower()] \
-                      if os.path.exists("data/cache/model") else []
-        st.session_state.nba_running = True  # always auto-load on first visit
+        st.session_state.nba_running = True
+        st.rerun()
 
     if is_admin() and st.button("🏀 Load / Refresh NBA Predictions", type="primary",
                   use_container_width=True, key="nba_load"):

@@ -45,6 +45,7 @@ def render_nhl(selected_date_str, force_retrain):
     if not st.session_state.nhl_auto_loaded and st.session_state.nhl_predictions.empty:
         st.session_state.nhl_auto_loaded = True
         st.session_state.nhl_running = True
+        st.rerun()
 
     # ── Refresh button — admin only ───────────────────────────────────────────
     if is_admin():

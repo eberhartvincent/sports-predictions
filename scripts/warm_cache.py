@@ -1,9 +1,8 @@
 """
 warm_cache.py — Daily cache warmer + prediction saver.
-
-Runs via GitHub Actions every day at 11 AM ET.
-Saves final predictions to data/cache/predictions/ so the app
-loads instantly for all users with zero pipeline execution on page load.
+Run via GitHub Actions daily or manually:
+    python scripts/warm_cache.py
+    python scripts/warm_cache.py --sport mlb --date 2026-05-02
 """
 
 import argparse
@@ -15,10 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# Ensure repo root is on sys.path so all modules resolve correctly
-# Works whether called as: python scripts/warm_cache.py  OR  python warm_cache.py
-_SCRIPT_DIR = Path(__file__).resolve().parent      # .../scripts/
-_ROOT = _SCRIPT_DIR.parent                         # .../sports-predictions/
+# ── Path setup — must happen before ANY local imports ─────────────────────────
+_ROOT = Path(__file__).resolve().parent.parent   # repo root
 for _p in [
     _ROOT,
     _ROOT / "config",
@@ -29,17 +26,13 @@ for _p in [
     _ROOT / "app",
     _ROOT / "scripts",
 ]:
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+    _s = str(_p)
+    if _s not in sys.path:
+        sys.path.insert(0, _s)
 
-# Also run compat to register remaining aliases
-try:
-    import compat  # noqa
-except ImportError:
-    pass  # paths already set above
-
-ET = ZoneInfo("America/New_York")
-PRED_DIR = Path("data/cache/predictions")
+# ── Now safe to import local modules ──────────────────────────────────────────
+ET       = ZoneInfo("America/New_York")
+PRED_DIR = _ROOT / "data" / "cache" / "predictions"
 
 
 def log(msg: str):
@@ -53,39 +46,32 @@ def save_predictions(sport: str, pipe, date: str):
     import pandas as pd
 
     try:
-        # Predictions DataFrame
         preds = getattr(pipe, "predictions", pd.DataFrame())
         if not preds.empty:
             preds.to_parquet(PRED_DIR / f"{sport}_predictions.parquet", index=False)
             log(f"  Saved {len(preds)} {sport.upper()} predictions")
 
-        # Pitcher predictions (MLB only)
         pitcher_preds = getattr(pipe, "pitcher_predictions", pd.DataFrame())
         if not pitcher_preds.empty:
-            pitcher_preds.to_parquet(PRED_DIR / f"{sport}_pitcher_predictions.parquet", index=False)
+            pitcher_preds.to_parquet(
+                PRED_DIR / f"{sport}_pitcher_predictions.parquet", index=False)
 
-        # Game projections
         game_proj = getattr(pipe, "game_projections",
                     getattr(pipe, "game_proj", []))
         if game_proj:
             with open(PRED_DIR / f"{sport}_game_projections.json", "w") as f:
                 json.dump(game_proj, f)
 
-        # Games list
-        games = getattr(pipe, "todays_games",
-                getattr(pipe, "games", []))
+        games = getattr(pipe, "todays_games", getattr(pipe, "games", []))
         if games:
             with open(PRED_DIR / f"{sport}_games.json", "w") as f:
                 json.dump(games, f)
 
-        # Model metrics
-        metrics = getattr(pipe, "model_metrics",
-                  getattr(pipe, "metrics", {}))
+        metrics = getattr(pipe, "model_metrics", getattr(pipe, "metrics", {}))
         if metrics:
             with open(PRED_DIR / f"{sport}_metrics.json", "w") as f:
                 json.dump(metrics, f)
 
-        # Metadata
         meta = {
             "date":       date,
             "updated_at": datetime.now(ET).isoformat(),
@@ -106,11 +92,11 @@ def warm_mlb(date: str, train: bool = True):
     try:
         from core.pipelines.mlb_pipeline import MLBPipeline
         pipe = MLBPipeline()
-        log("  Fetching schedule …");      pipe.fetch_schedule(date)
+        log("  Fetching schedule …");       pipe.fetch_schedule(date)
         if not pipe.games:
             log("  No MLB games today — skipping"); return
         log(f"  {len(pipe.games)} games found")
-        log("  Fetching rosters …");           pipe.fetch_rosters()
+        log("  Fetching rosters …");            pipe.fetch_rosters()
         log("  Fetching IL players …");         pipe.fetch_il_players()
         log("  Fetching game logs …");          pipe.fetch_game_logs()
         log("  Fetching pitcher stats …");      pipe.fetch_pitcher_stats()
@@ -134,19 +120,19 @@ def warm_nhl(date: str, train: bool = True):
     try:
         from core.pipelines.nhl_pipeline import NHLPipeline
         pipe = NHLPipeline()
-        log("  Fetching schedule …");           pipe.fetch_schedule(date)
+        log("  Fetching schedule …");            pipe.fetch_schedule(date)
         if not pipe.todays_games:
             log("  No NHL games today — skipping"); return
         log(f"  {len(pipe.todays_games)} games found")
-        log("  Fetching rosters …");            pipe.fetch_rosters()
-        log("  Fetching game logs …");          pipe.fetch_game_logs()
-        log("  Fetching NST stats …");          pipe.fetch_nst_stats()
-        log("  Fetching goalie quality …");     pipe.fetch_goalie_quality()
-        log("  Fetching unavailable players …");pipe.fetch_unavailable_players()
+        log("  Fetching rosters …");             pipe.fetch_rosters()
+        log("  Fetching game logs …");           pipe.fetch_game_logs()
+        log("  Fetching NST stats …");           pipe.fetch_nst_stats()
+        log("  Fetching goalie quality …");      pipe.fetch_goalie_quality()
+        log("  Fetching unavailable players …"); pipe.fetch_unavailable_players()
         if train:
             log("  Training / loading model …"); pipe.train_model(force_retrain=False)
-        log("  Building predictions …");        pipe.build_predictions()
-        log("  Building betting projections …");pipe.build_betting_projections()
+        log("  Building predictions …");         pipe.build_predictions()
+        log("  Building betting projections …"); pipe.build_betting_projections()
         save_predictions("nhl", pipe, date)
         log(f"  ✅ NHL done — {len(pipe.predictions)} players")
     except Exception as e:
@@ -158,16 +144,16 @@ def warm_nba(date: str, train: bool = True):
     try:
         from core.pipelines.nba_pipeline import NBAPipeline
         pipe = NBAPipeline()
-        log("  Fetching schedule …");       pipe.fetch_schedule(date)
+        log("  Fetching schedule …");        pipe.fetch_schedule(date)
         if not pipe.games:
             log("  No NBA games today — skipping"); return
         log(f"  {len(pipe.games)} games found")
-        log("  Fetching rosters …");        pipe.fetch_rosters()
-        log("  Fetching game logs …");      pipe.fetch_game_logs()
-        log("  Fetching team defense …");   pipe.fetch_team_defense()
+        log("  Fetching rosters …");         pipe.fetch_rosters()
+        log("  Fetching game logs …");       pipe.fetch_game_logs()
+        log("  Fetching team defense …");    pipe.fetch_team_defense()
         if train:
             log("  Training / loading models …"); pipe.train_models(force=False)
-        log("  Building predictions …");    pipe.build_predictions()
+        log("  Building predictions …");     pipe.build_predictions()
         log("  Building game projections …");pipe.build_game_projections()
         save_predictions("nba", pipe, date)
         log(f"  ✅ NBA done — {len(pipe.predictions)} players")
@@ -178,14 +164,15 @@ def warm_nba(date: str, train: bool = True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--date",     default=None)
-    parser.add_argument("--sport",    default="all", choices=["all","mlb","nhl","nba"])
+    parser.add_argument("--sport",    default="all",
+                        choices=["all", "mlb", "nhl", "nba"])
     parser.add_argument("--no-train", action="store_true")
-    args   = parser.parse_args()
-    date   = args.date or datetime.now(ET).strftime("%Y-%m-%d")
-    train  = not args.no_train
+    args  = parser.parse_args()
+    date  = args.date or datetime.now(ET).strftime("%Y-%m-%d")
+    train = not args.no_train
 
     log(f"Warming caches for {date} | sport={args.sport} | train={train}")
-    if args.sport in ("all","mlb"): warm_mlb(date, train)
-    if args.sport in ("all","nhl"): warm_nhl(date, train)
-    if args.sport in ("all","nba"): warm_nba(date, train)
+    if args.sport in ("all", "mlb"): warm_mlb(date, train)
+    if args.sport in ("all", "nhl"): warm_nhl(date, train)
+    if args.sport in ("all", "nba"): warm_nba(date, train)
     log("All done.")

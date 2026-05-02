@@ -15,6 +15,29 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# Ensure repo root is on sys.path so all modules resolve correctly
+# Works whether called as: python scripts/warm_cache.py  OR  python warm_cache.py
+_SCRIPT_DIR = Path(__file__).resolve().parent      # .../scripts/
+_ROOT = _SCRIPT_DIR.parent                         # .../sports-predictions/
+for _p in [
+    _ROOT,
+    _ROOT / "config",
+    _ROOT / "core" / "pipelines",
+    _ROOT / "core" / "models",
+    _ROOT / "core" / "features",
+    _ROOT / "data" / "api",
+    _ROOT / "app",
+    _ROOT / "scripts",
+]:
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+# Also run compat to register remaining aliases
+try:
+    import compat  # noqa
+except ImportError:
+    pass  # paths already set above
+
 ET = ZoneInfo("America/New_York")
 PRED_DIR = Path("data/cache/predictions")
 
@@ -81,7 +104,7 @@ def save_predictions(sport: str, pipe, date: str):
 def warm_mlb(date: str, train: bool = True):
     log("=== MLB ===")
     try:
-        from mlb_pipeline import MLBPipeline
+        from core.pipelines.mlb_pipeline import MLBPipeline
         pipe = MLBPipeline()
         log("  Fetching schedule …");      pipe.fetch_schedule(date)
         if not pipe.games:
@@ -109,7 +132,7 @@ def warm_mlb(date: str, train: bool = True):
 def warm_nhl(date: str, train: bool = True):
     log("=== NHL ===")
     try:
-        from data_pipeline import NHLPipeline
+        from core.pipelines.nhl_pipeline import NHLPipeline
         pipe = NHLPipeline()
         log("  Fetching schedule …");           pipe.fetch_schedule(date)
         if not pipe.todays_games:
@@ -133,7 +156,7 @@ def warm_nhl(date: str, train: bool = True):
 def warm_nba(date: str, train: bool = True):
     log("=== NBA ===")
     try:
-        from nba_pipeline import NBAPipeline
+        from core.pipelines.nba_pipeline import NBAPipeline
         pipe = NBAPipeline()
         log("  Fetching schedule …");       pipe.fetch_schedule(date)
         if not pipe.games:

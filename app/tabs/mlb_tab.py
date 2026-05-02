@@ -135,9 +135,9 @@ def render_mlb(selected_date: str, force_retrain: bool):
     st.divider()
 
     # ── Game projection cards ─────────────────────────────────────────────────
-    if pipeline and pipeline.game_proj:
-        st.markdown("### 🎰 Game Projections")
-        gprojs = pipeline.game_proj
+    gprojs = st.session_state.get("_mlb_game_proj",
+             pipeline.game_proj if pipeline else [])
+    if gprojs:
         for row_start in range(0, len(gprojs), 3):
             cols = st.columns(min(3, len(gprojs) - row_start))
             for col, proj in zip(cols, gprojs[row_start:row_start+3]):

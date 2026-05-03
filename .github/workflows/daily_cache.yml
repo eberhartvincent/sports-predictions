@@ -2,7 +2,7 @@ name: Daily Cache Warm
 
 on:
   schedule:
-    - cron: "0 15 * * *"
+    - cron: "20 15 * * *"
   workflow_dispatch:
     inputs:
       sport:

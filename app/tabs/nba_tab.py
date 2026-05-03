@@ -30,10 +30,12 @@ def render_nba(selected_date: str, force_retrain: bool):
         if k not in st.session_state: st.session_state[k]=v
 
 
-    from app.prediction_store import load_predictions, last_updated
+    from app.prediction_store import load_predictions, last_updated, predictions_date
 
     # ── Load from pre-computed predictions (instant) ──────────────────────────
-    if st.session_state.nba_preds.empty:
+    _saved_date = predictions_date("nba")
+    _session_date = st.session_state.get("_nba_pred_date")
+    if st.session_state.nba_preds.empty or (_saved_date and _saved_date != _session_date):
         stored = load_predictions("nba")
         if not stored["predictions"].empty:
             st.session_state.nba_preds      = stored["predictions"]
@@ -43,6 +45,7 @@ def render_nba(selected_date: str, force_retrain: bool):
             ) if "team" in stored["predictions"].columns else []
             st.session_state._nba_game_proj = stored["game_projections"]
             st.session_state.nba_last_run   = last_updated("nba") or "pre-computed"
+            st.session_state._nba_pred_date    = _saved_date
 
     # ── Admin: refresh button ─────────────────────────────────────────────────
     if is_admin() and st.button("🏀 Refresh NBA Predictions", type="primary",

@@ -89,7 +89,32 @@ def load_predictions(sport: str) -> dict:
     return result
 
 
-def last_updated(sport: str) -> Optional[str]:
+def is_stale(sport: str) -> bool:
+    """
+    Returns True if the predictions in session state are from a previous day.
+    Call this every render to detect when the workflow has committed fresh predictions.
+    """
+    meta_file = PRED_DIR / f"{sport}_meta.json"
+    if not meta_file.exists():
+        return False
+    try:
+        meta  = json.loads(meta_file.read_text())
+        saved = meta.get("date", "")
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        return saved == today  # file is TODAY — session state may be yesterday's
+    except Exception:
+        return False
+
+
+def predictions_date(sport: str) -> Optional[str]:
+    """Returns the date string the saved predictions are for."""
+    meta_file = PRED_DIR / f"{sport}_meta.json"
+    if not meta_file.exists():
+        return None
+    try:
+        return json.loads(meta_file.read_text()).get("date")
+    except Exception:
+        return None
     """Human-readable string of when predictions were last saved."""
     meta_file = PRED_DIR / f"{sport}_meta.json"
     if not meta_file.exists():

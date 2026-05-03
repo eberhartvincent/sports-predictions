@@ -72,27 +72,34 @@ with st.sidebar:
     if st.button("🚪 Sign Out", use_container_width=True): logout()
 
     st.divider()
-    st.markdown("### 📅 Date")
-    today_et    = datetime.now(ET).date()
-    picked_date = st.date_input("Date",
-        value=st.session_state.selected_date or today_et,
-        min_value=datetime(2024,10,1).date(), max_value=today_et,
-        label_visibility="collapsed")
 
-    if picked_date != st.session_state.selected_date:
-        st.session_state.selected_date    = picked_date
-        # Reset all sports so they reload for the new date
-        for _k in ["nhl_predictions","nhl_pipeline","nhl_games","nhl_teams",
-                   "nhl_auto_loaded","nhl_last_run",
-                   "mlb_preds","mlb_pipeline","mlb_games","mlb_teams","mlb_last_run",
-                   "nba_preds","nba_pipeline","nba_games","nba_teams","nba_last_run"]:
-            if _k in st.session_state:
-                st.session_state[_k] = pd.DataFrame() if "pred" in _k or _k=="mlb_preds" or _k=="nba_preds" else (
-                    None if "pipeline" in _k or "last_run" in _k else
-                    False if _k=="nhl_auto_loaded" else [])
+    if admin:
+        st.markdown("### 📅 Date")
+        today_et    = datetime.now(ET).date()
+        picked_date = st.date_input("Date",
+            value=st.session_state.selected_date or today_et,
+            min_value=datetime(2024,10,1).date(), max_value=today_et,
+            label_visibility="collapsed")
 
-    st.caption(f"Showing **{'Today' if picked_date==today_et else picked_date.strftime('%b %d, %Y')}**")
-    st.divider()
+        if picked_date != st.session_state.selected_date:
+            st.session_state.selected_date    = picked_date
+            # Reset all sports so they reload for the new date
+            for _k in ["nhl_predictions","nhl_pipeline","nhl_games","nhl_teams",
+                       "nhl_auto_loaded","nhl_last_run",
+                       "mlb_preds","mlb_pipeline","mlb_games","mlb_teams","mlb_last_run",
+                       "nba_preds","nba_pipeline","nba_games","nba_teams","nba_last_run"]:
+                if _k in st.session_state:
+                    st.session_state[_k] = pd.DataFrame() if "pred" in _k or _k=="mlb_preds" or _k=="nba_preds" else (
+                        None if "pipeline" in _k or "last_run" in _k else
+                        False if _k=="nhl_auto_loaded" else [])
+
+        st.caption(f"Showing **{'Today' if picked_date==today_et else picked_date.strftime('%b %d, %Y')}**")
+        st.divider()
+    else:
+        today_et    = datetime.now(ET).date()
+        picked_date = today_et
+        if st.session_state.selected_date != today_et:
+            st.session_state.selected_date = today_et
 
     force_retrain = False
     if admin:

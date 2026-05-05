@@ -56,9 +56,14 @@ MLB_PITCHER_RECENT_STARTS = 5
 MLB_LEAGUE_AVG_RUNS     = 4.5
 MLB_HOME_ADVANTAGE_RUNS = 0.1
 MLB_REGRESSION_WEIGHT   = 0.40
-MLB_CONF_ELITE          = 0.65
-MLB_CONF_HIGH           = 0.55
-MLB_CONF_MEDIUM         = 0.45
+# MLB confidence — based on proj_hits (hit probability)
+# Elite: top ~5% of hitters on any given day (~0.80+ hit prob)
+# High:  top ~15%
+# Medium: top ~35%
+MLB_CONF_ELITE          = 0.80
+MLB_CONF_HIGH           = 0.68
+MLB_CONF_MEDIUM         = 0.55
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. NBA
@@ -77,9 +82,22 @@ NBA_LEAGUE_AVG_PTS      = 112.0
 NBA_HOME_ADVANTAGE_PTS  = 2.0
 NBA_REGRESSION_WEIGHT   = 0.35
 NBA_SPREAD_SIGMA        = 11.0
-NBA_CONF_ELITE          = 25
-NBA_CONF_HIGH           = 18
-NBA_CONF_MEDIUM         = 12
+
+# NBA confidence — based on proj_pts
+# Elite: genuine star performance (30+ projected)
+# High:  strong night (22+)
+# Medium: solid contributor (15+)
+NBA_CONF_ELITE          = 30
+NBA_CONF_HIGH           = 22
+NBA_CONF_MEDIUM         = 15
+
+# NHL confidence — based on goal_probability
+# Elite: genuine sniper on a great matchup (~top 3-5 players on slate)
+# High:  strong play driver
+# Medium: reasonable upside
+NHL_CONF_ELITE           = 0.32
+NHL_CONF_HIGH            = 0.22
+NHL_CONF_MEDIUM          = 0.14
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. Model settings (shared across all sports)

@@ -133,12 +133,25 @@ from app.tabs.mlb_tab import render_mlb
 from app.tabs.nba_tab import render_nba
 from app.tabs.nhl_tab import render_nhl
 
-tab_nhl, tab_mlb, tab_nba = st.tabs([
-    "🏒  NHL — Goalscorer",
-    "⚾  MLB — Batter & Pitcher",
-    "🏀  NBA — Player Props",
-])
+if admin:
+    tab_nhl, tab_mlb, tab_nba, tab_bt = st.tabs([
+        "🏒  NHL — Goalscorer",
+        "⚾  MLB — Batter & Pitcher",
+        "🏀  NBA — Player Props",
+        "🔬  Backtest",
+    ])
+else:
+    tab_nhl, tab_mlb, tab_nba = st.tabs([
+        "🏒  NHL — Goalscorer",
+        "⚾  MLB — Batter & Pitcher",
+        "🏀  NBA — Player Props",
+    ])
+    tab_bt = None
 
 with tab_mlb: render_mlb(selected_date_str, force_retrain)
 with tab_nba: render_nba(selected_date_str, force_retrain)
 with tab_nhl: render_nhl(selected_date_str, force_retrain)
+if tab_bt:
+    with tab_bt:
+        from app.pages.backtest_page import render_backtest
+        render_backtest()

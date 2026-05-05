@@ -41,14 +41,22 @@ def log(msg: str):
 
 
 def save_predictions(sport: str, pipe, date: str):
-    """Save pipeline predictions + metadata to disk for instant app loading."""
+    """Save pipeline predictions + metadata to disk for instant app loading.
+    Also saves a dated snapshot to history/ for backtesting."""
     PRED_DIR.mkdir(parents=True, exist_ok=True)
+    HIST_DIR = PRED_DIR / "history"
+    HIST_DIR.mkdir(parents=True, exist_ok=True)
     import pandas as pd
 
     try:
         preds = getattr(pipe, "predictions", pd.DataFrame())
         if not preds.empty:
+            # Current predictions (overwritten daily)
             preds.to_parquet(PRED_DIR / f"{sport}_predictions.parquet", index=False)
+            # Historical snapshot (one per date, never overwritten)
+            hist_file = HIST_DIR / f"{sport}_{date}.parquet"
+            if not hist_file.exists():
+                preds.to_parquet(hist_file, index=False)
             log(f"  Saved {len(preds)} {sport.upper()} predictions")
 
         pitcher_preds = getattr(pipe, "pitcher_predictions", pd.DataFrame())

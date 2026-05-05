@@ -2,7 +2,7 @@ name: Daily Cache Warm
 
 on:
   schedule:
-    - cron: "20 15 * * *"
+    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       sport:
@@ -68,6 +68,15 @@ jobs:
             data/cache/model/
           key: sport-caches-${{ github.run_id }}
 
+
+      - name: Send predictions email
+        if: success()
+        env:
+          EMAIL_SENDER:     ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:   ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+        run: |
+          python scripts/send_predictions_email.py
       - name: Commit only prediction files to repo
         run: |
           git config user.name  "github-actions[bot]"

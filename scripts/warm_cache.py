@@ -111,6 +111,7 @@ def warm_mlb(date: str, train: bool = True):
         log("  Fetching team pitching …");      pipe.fetch_team_pitching_stats()
         log("  Fetching batter handedness …");  pipe.fetch_batter_handedness()
         log("  Fetching batter vs pitcher …");  pipe.fetch_batter_vs_pitcher()
+        log("  Fetching Statcast xStats …");    pipe.fetch_statcast_stats()
         log("  Fetching weather …");            pipe.fetch_weather()
         if train:
             log("  Training / loading models …"); pipe.train_models(force=False)

@@ -27,6 +27,27 @@ from config import (
 
 def _p(msg): print(f"  [NBA] {msg}")
 
+# ── Pace and rest constants ───────────────────────────────────────────────────
+NBA_LEAGUE_AVG_PACE = 98.5   # league avg possessions per 48 min
+
+def _rest_curve(rest_days: int) -> float:
+    """
+    Non-linear rest effect based on NBA fatigue research.
+    Peak performance at 1-2 days rest. B2B is worst. 3+ days slightly flat.
+    This outperforms a simple B2B flag significantly.
+    """
+    if rest_days == 0: return 0.94   # back-to-back
+    if rest_days == 1: return 1.02   # optimal
+    if rest_days == 2: return 1.01   # good
+    if rest_days == 3: return 1.00   # neutral
+    return 0.99                       # 4+ days: slight staleness
+
+def _pace_adj_pts(pts: float, team_pace: float, opp_pace: float) -> float:
+    """Normalize points to per-100-possessions basis."""
+    expected = (team_pace + opp_pace) / 2
+    if expected <= 0: return pts
+    return pts * (NBA_LEAGUE_AVG_PACE / expected)
+
 def _now_naive():
     """Current time as tz-naive timestamp for safe date arithmetic."""
     return pd.Timestamp.now().tz_localize(None)
@@ -61,6 +82,13 @@ FEAT_COLS = [
     "opp_def_rating",    # opponent defensive rating (lower = better defense)
     "rest_days",         # days since last game (capped at 7)
     "is_back_to_back",   # 1 if 0 days rest
+    # ── New: pace, rest curve, usage ──────────────────────────────────────────
+    "pace_adj_pts_3g",   # points per 100 possessions last 3G (best predictor)
+    "pace_adj_pts_season",# season per-100 possessions
+    "expected_pace",     # projected game pace (avg of both teams)
+    "rest_curve",        # non-linear rest factor (peak at 1-2 days rest)
+    "usage_pct_3g",      # estimated usage % last 3 games
+    "usage_boost",       # usage increase when star teammates are out
 ]
 
 

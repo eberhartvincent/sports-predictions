@@ -26,6 +26,15 @@ from mlb_api import (
     get_game_weather, get_batter_vs_pitcher,
     BALLPARK_COORDS, ROOFED_STADIUMS,
 )
+try:
+    from statcast_client import (
+        get_statcast_batter_stats, get_statcast_pitcher_stats,
+        get_umpire_tendency, get_sprint_speed,
+    )
+    STATCAST_AVAILABLE = True
+except ImportError:
+    STATCAST_AVAILABLE = False
+    _p = lambda msg: print(f"  [MLB] {msg}")
 from sport_model import SportModel
 from config import (
     MLB_MIN_GP as MIN_GP, MLB_SEASON as SEASON,
@@ -102,6 +111,24 @@ FEAT_COLS = [
     "weather_hr_factor","wind_component","temp_f","precip_mm",
     # Batter vs pitcher history (weighted by sample size)
     "bvp_avg","bvp_slg","bvp_ops","bvp_hr_rate","bvp_sample_weight",
+    # ── Statcast xStats (Baseball Savant — free, strongest predictors) ────────
+    # These are the most predictive features available for MLB.
+    # xBA/xSLG capture true talent better than actual BA/SLG.
+    # Luck indicators (actual - expected) identify regression candidates.
+    "exit_velocity_avg",    # avg exit velocity (raw power)
+    "barrel_pct",           # barrel rate (optimal launch angle+velocity)
+    "hard_hit_pct",         # hard hit% (>= 95 mph exit velocity)
+    "xba",                  # expected batting average (vs actual BA)
+    "xslg",                 # expected slugging (vs actual SLG)
+    "xwoba",                # expected wOBA (best overall hitting metric)
+    "sweet_spot_pct",       # sweet spot contact % (launch angle 8-32°)
+    "woba_luck",            # actual wOBA - expected wOBA (negative = unlucky = buy)
+    "ba_luck",              # actual BA - xBA
+    # Umpire factor
+    "umpire_run_factor",    # today's HP umpire run scoring tendency
+    "umpire_k_factor",      # today's HP umpire strikeout tendency
+    # Sprint speed (run scoring proxy)
+    "sprint_speed",         # ft/sec (faster = more runs scored)
 ]
 
 
@@ -308,9 +335,13 @@ def build_training_df(all_logs: pd.DataFrame,
 class MLBPipeline:
     def __init__(self):
         self.games:             list         = []
-        self.predictions:       pd.DataFrame = pd.DataFrame()
+        self.predictions:         pd.DataFrame = pd.DataFrame()
         self.pitcher_predictions: pd.DataFrame = pd.DataFrame()
-        self.game_proj:         list         = []
+        self.game_proj:           list         = []
+        self._statcast_batters:   dict         = {}
+        self._statcast_pitchers:  dict         = {}
+        self._sprint_speed:       dict         = {}
+        self._umpire_map:         dict         = {}
         self._rosters:          pd.DataFrame = pd.DataFrame()
         self._all_logs:         pd.DataFrame = pd.DataFrame()
         self._pitcher_map:      dict         = {}
@@ -526,6 +557,62 @@ class MLBPipeline:
                     time.sleep(0.08)
         _p(f"BvP fetched for {fetched} batter-pitcher pairs ({len(self._bvp_cache)} total cached)")
         return self._bvp_cache
+
+    def fetch_statcast_stats(self) -> tuple:
+        """
+        Fetch Statcast xStats for batters and pitchers.
+        These are the single strongest individual predictors —
+        xwOBA outperforms traditional stats significantly.
+        """
+        _p("Fetching Statcast batter stats…")
+        if not STATCAST_AVAILABLE:
+            _p("  Statcast not available — skipping")
+            self._statcast_batters  = {}
+            self._statcast_pitchers = {}
+            self._umpire_map        = {}
+            self._sprint_speed      = {}
+            return {}, {}, {}, {}
+        try:
+            batter_df  = get_statcast_batter_stats(SEASON)
+            pitcher_df = get_statcast_pitcher_stats(SEASON)
+            sprint_df  = get_sprint_speed(SEASON)
+
+            # Index by player_id for fast lookup
+            self._statcast_batters = {}
+            if not batter_df.empty and "player_id" in batter_df.columns:
+                for _, row in batter_df.iterrows():
+                    self._statcast_batters[int(row["player_id"])] = row.to_dict()
+
+            self._statcast_pitchers = {}
+            if not pitcher_df.empty and "player_id" in pitcher_df.columns:
+                for _, row in pitcher_df.iterrows():
+                    self._statcast_pitchers[int(row["player_id"])] = row.to_dict()
+
+            self._sprint_speed = {}
+            if not sprint_df.empty and "player_id" in sprint_df.columns:
+                for _, row in sprint_df.iterrows():
+                    self._sprint_speed[int(row["player_id"])] = float(
+                        row.get("sprint_speed", 27.0))
+
+            _p(f"Statcast: {len(self._statcast_batters)} batters, "
+               f"{len(self._statcast_pitchers)} pitchers, "
+               f"{len(self._sprint_speed)} sprint speeds")
+        except Exception as e:
+            _p(f"Statcast fetch error: {e}")
+            self._statcast_batters = {}; self._statcast_pitchers = {}
+            self._sprint_speed = {}
+
+        # Umpire tendency for today
+        try:
+            date_str = self.games[0].get("game_date","") if self.games else ""
+            self._umpire_map = get_umpire_tendency(date_str) if date_str else {}
+            _p(f"Umpire data: {len(self._umpire_map)} games")
+        except Exception as e:
+            _p(f"Umpire data error: {e}")
+            self._umpire_map = {}
+
+        return (self._statcast_batters, self._statcast_pitchers,
+                self._sprint_speed, self._umpire_map)
 
     def fetch_weather(self) -> dict:
         """Fetch weather for each game using Open-Meteo (free, no API key)."""

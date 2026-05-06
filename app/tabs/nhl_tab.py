@@ -19,6 +19,50 @@ def _bar(val, max_val, colour, fmt=".2f"):
             f'<div style="width:{pct:.0f}%;height:100%;background:{colour};border-radius:5px;"></div></div>'
             f'<span style="font-weight:700;color:#e8ecf4;min-width:36px;font-size:.88rem;">{val:{fmt}}</span></div>')
 
+def _apply_prob_ceiling(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply physics-based probability ceiling to loaded predictions.
+    A player cannot score more goals than their shot volume × sh% allows.
+    Runs on every load so stale parquet files get corrected immediately.
+    """
+    if df.empty or "goal_probability" not in df.columns:
+        return df
+
+    LEAGUE_AVG_SH  = 0.104
+    BEST_CASE_RATE = 0.130
+    K_SHOTS        = 150
+
+    df = df.copy()
+    ceilings = []
+    for _, row in df.iterrows():
+        shots_pg    = float(row.get("season_shots_pg",
+                      row.get("rolling_5g_shots", 0)) or 0)
+        gp          = max(int(row.get("gp_season", row.get("gp", 1))), 1)
+        season_goals= int(row.get("season_goals", 0))
+        total_shots = shots_pg * gp
+        raw_sh      = season_goals / max(total_shots, 1)
+        w           = total_shots / (total_shots + K_SHOTS)
+        reg_sh      = w * raw_sh + (1 - w) * LEAGUE_AVG_SH
+        ceiling     = shots_pg * min(reg_sh * 1.5, BEST_CASE_RATE)
+        ceilings.append(max(0.02, min(ceiling, 0.65)))
+
+    import numpy as np
+    raw_probs  = df["goal_probability"].values.astype(float)
+    ceil_arr   = np.array(ceilings)
+    clipped    = np.minimum(raw_probs, ceil_arr)
+    final      = 0.90 * clipped + 0.10 * np.minimum(raw_probs, 0.65)
+    df["goal_probability"] = np.round(final, 4)
+
+    def _conf(p):
+        if p >= 0.32: return "Elite"
+        if p >= 0.22: return "High"
+        if p >= 0.14: return "Medium"
+        return "Low"
+    df["confidence"] = df["goal_probability"].apply(_conf)
+    return df.sort_values("goal_probability", ascending=False).reset_index(drop=True)
+
+
+
 
 def render_nhl(selected_date_str, force_retrain):
     from config.settings import NHL_TEAMS, CURRENT_SEASON
@@ -48,7 +92,7 @@ def render_nhl(selected_date_str, force_retrain):
     if st.session_state.nhl_predictions.empty or (_saved_date and _saved_date != _session_date):
         stored = load_predictions("nhl")
         if not stored["predictions"].empty:
-            st.session_state.nhl_predictions  = stored["predictions"]
+            st.session_state.nhl_predictions  = _apply_prob_ceiling(stored["predictions"])
             st.session_state.nhl_games        = stored["games"]
             st.session_state.nhl_teams        = sorted(
                 stored["predictions"]["team"].dropna().unique().tolist()
@@ -84,7 +128,7 @@ def render_nhl(selected_date_str, force_retrain):
                     date=selected_date_str,
                 )
                 st.session_state.nhl_pipeline    = pipe
-                st.session_state.nhl_predictions = preds
+                st.session_state.nhl_predictions = _apply_prob_ceiling(preds)
                 st.session_state.nhl_last_run    = datetime.now(ET).strftime("%I:%M %p ET")
                 st.session_state.nhl_games       = pipe.get_games_today()
                 st.session_state.nhl_teams       = (

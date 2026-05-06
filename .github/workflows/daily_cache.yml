@@ -93,5 +93,8 @@ jobs:
             git diff --staged --name-only
             DATE=$(TZ="America/New_York" date +%Y-%m-%d)
             git commit -m "chore: predictions ${DATE} [skip ci]"
+            git fetch origin main
+            git rebase origin/main
+            git push origin main
             git push
           fi

@@ -156,14 +156,15 @@ UI_DATE_MIN       = "2024-10-01"
 UI_APP_TITLE      = "Sports Predictor"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 8. Legacy paths (model_trainer.py / nhl_model.py)
+# 8. Legacy paths — NHL model wrapper (NHLModel uses SportModel internally)
+# These point to the SportModel cache files for the NHL goals classifier.
 # ══════════════════════════════════════════════════════════════════════════════
 
 MODEL_DIR     = MODEL_CACHE_DIR
-MODEL_PATH    = f"{MODEL_CACHE_DIR}/nhl_goalscorer_model.joblib"
-SCALER_PATH   = f"{MODEL_CACHE_DIR}/nhl_goalscorer_scaler.joblib"
-FEATURES_PATH = f"{MODEL_CACHE_DIR}/nhl_goalscorer_features.joblib"
-METRICS_PATH  = f"{MODEL_CACHE_DIR}/nhl_goalscorer_metrics.joblib"
+MODEL_PATH    = f"{MODEL_CACHE_DIR}/nhl_goals_model.joblib"
+SCALER_PATH   = f"{MODEL_CACHE_DIR}/nhl_goals_scaler.joblib"
+FEATURES_PATH = f"{MODEL_CACHE_DIR}/nhl_goals_features.joblib"
+METRICS_PATH  = f"{MODEL_CACHE_DIR}/nhl_goals_metrics.joblib"
 
 # NHL feature engineering
 ROLLING_WINDOWS = [3, 5, 10]

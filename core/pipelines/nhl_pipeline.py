@@ -1,5 +1,5 @@
 """
-data_pipeline.py — NHL prediction pipeline
+nhl_pipeline.py — NHL prediction pipeline
 
 Steps:
   1. Fetch schedule

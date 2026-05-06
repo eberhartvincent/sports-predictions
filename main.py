@@ -135,14 +135,14 @@ from app.tabs.nhl_tab import render_nhl
 
 if admin:
     tab_nhl, tab_mlb, tab_nba, tab_bt = st.tabs([
-        "🏒  NHL — Goalscorer",
+        "🏒  NHL — Goal Predictor",
         "⚾  MLB — Batter & Pitcher",
         "🏀  NBA — Player Props",
         "🔬  Backtest",
     ])
 else:
     tab_nhl, tab_mlb, tab_nba = st.tabs([
-        "🏒  NHL — Goalscorer",
+        "🏒  NHL — Goal Predictor",
         "⚾  MLB — Batter & Pitcher",
         "🏀  NBA — Player Props",
     ])

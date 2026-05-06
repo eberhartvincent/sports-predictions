@@ -19,7 +19,7 @@ from core.features.nhl_features import get_feature_columns
 
 class GoalscorerModel:
     """
-    NHL anytime goalscorer classifier.
+    NHL goal probability classifier.
     Delegates all ML work to SportModel("nhl_goals", "classify").
     """
 

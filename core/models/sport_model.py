@@ -10,7 +10,10 @@ import pandas as pd
 import joblib
 
 from sklearn.preprocessing import StandardScaler
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import roc_auc_score, brier_score_loss, mean_absolute_error
+from sklearn.model_selection import train_test_split
 
 try:
     import xgboost as xgb
@@ -40,6 +43,7 @@ class SportModel:
         self.scaler        = StandardScaler()
         self.feature_names = []
         self.is_trained    = False
+        self.calibrator    = None
         self.metrics       = {}
 
         self._model_path    = f"{MODEL_CACHE_DIR}/{name}_model.joblib"
@@ -48,54 +52,60 @@ class SportModel:
         self._metrics_path  = f"{MODEL_CACHE_DIR}/{name}_metrics.joblib"
 
     def _build_clf(self, scale_pos_weight=4.0, n_samples=1000):
-        # Scale complexity with data size — prevents overfitting on small datasets
+        # Scale complexity with data — prevents overfitting on small datasets.
+        # Key anti-overfitting levers:
+        #   max_depth=3      — shallow trees generalise better for sports data
+        #   min_child_weight — don't split on tiny groups of players
+        #   gamma            — only split if gain is meaningful
+        #   reg_alpha/lambda — L1+L2 regularisation
+        #   subsample/colsample — random sampling reduces variance
         if n_samples < 300:
-            n_est, depth, lr, alpha, lam = 50,  2, 0.10, 1.0, 2.0
+            n_est, depth, lr, alpha, lam, mcw = 80,  2, 0.05, 2.0, 3.0, 10
         elif n_samples < 1000:
-            n_est, depth, lr, alpha, lam = 100, 3, 0.08, 0.5, 1.0
+            n_est, depth, lr, alpha, lam, mcw = 150, 3, 0.05, 1.0, 2.0, 8
         else:
-            n_est, depth, lr, alpha, lam = MODEL_N_ESTIMATORS, MODEL_MAX_DEPTH, MODEL_LEARNING_RATE, 0.1, 1.0
+            n_est, depth, lr, alpha, lam, mcw = MODEL_N_ESTIMATORS, MODEL_MAX_DEPTH, MODEL_LEARNING_RATE, 0.5, 1.5, 5
 
         if XGBOOST_AVAILABLE:
             return xgb.XGBClassifier(
                 n_estimators=n_est, max_depth=depth, learning_rate=lr,
-                subsample=MODEL_SUBSAMPLE, colsample_bytree=MODEL_COLSAMPLE_BYTREE,
+                subsample=0.75, colsample_bytree=0.75,   # more aggressive subsampling
                 scale_pos_weight=scale_pos_weight,
                 reg_alpha=alpha, reg_lambda=lam,
-                min_child_weight=5,   # prevents splitting on tiny leaf nodes
-                gamma=0.1,            # minimum gain to make a split
+                min_child_weight=mcw,
+                gamma=0.2,              # higher = harder to split = less overfitting
                 eval_metric="logloss", random_state=MODEL_RANDOM_STATE,
                 verbosity=0, n_jobs=1,
             )
         from sklearn.ensemble import GradientBoostingClassifier
         return GradientBoostingClassifier(
             n_estimators=n_est, max_depth=depth, learning_rate=lr,
-            subsample=MODEL_SUBSAMPLE, random_state=MODEL_RANDOM_STATE,
-            min_samples_leaf=10)
+            subsample=0.75, random_state=MODEL_RANDOM_STATE,
+            min_samples_leaf=15)
 
     def _build_reg(self, n_samples=1000):
         if n_samples < 300:
-            n_est, depth, lr, alpha, lam = 50,  2, 0.10, 1.0, 2.0
+            n_est, depth, lr, alpha, lam, mcw = 80,  2, 0.05, 2.0, 3.0, 10
         elif n_samples < 1000:
-            n_est, depth, lr, alpha, lam = 100, 3, 0.08, 0.5, 1.0
+            n_est, depth, lr, alpha, lam, mcw = 150, 3, 0.05, 1.0, 2.0, 8
         else:
-            n_est, depth, lr, alpha, lam = MODEL_N_ESTIMATORS, MODEL_MAX_DEPTH, MODEL_LEARNING_RATE, 0.1, 1.0
+            n_est, depth, lr, alpha, lam, mcw = MODEL_N_ESTIMATORS, MODEL_MAX_DEPTH, MODEL_LEARNING_RATE, 0.5, 1.5, 5
 
         if XGBOOST_AVAILABLE:
             return xgb.XGBRegressor(
                 n_estimators=n_est, max_depth=depth, learning_rate=lr,
-                subsample=MODEL_SUBSAMPLE, colsample_bytree=MODEL_COLSAMPLE_BYTREE,
+                subsample=0.75, colsample_bytree=0.75,
                 reg_alpha=alpha, reg_lambda=lam,
-                min_child_weight=5,
-                gamma=0.1,
+                min_child_weight=mcw,
+                gamma=0.2,
                 eval_metric="mae", random_state=MODEL_RANDOM_STATE,
                 verbosity=0, n_jobs=1,
             )
         from sklearn.ensemble import GradientBoostingRegressor
         return GradientBoostingRegressor(
             n_estimators=n_est, max_depth=depth, learning_rate=lr,
-            subsample=MODEL_SUBSAMPLE, random_state=MODEL_RANDOM_STATE,
-            min_samples_leaf=10)
+            subsample=0.75, random_state=MODEL_RANDOM_STATE,
+            min_samples_leaf=15)
 
     def train(self, df: pd.DataFrame, target_col: str,
               feat_cols: list, min_samples: int = 100) -> dict:
@@ -116,22 +126,37 @@ class SportModel:
             n_neg = int((y==0).sum()); n_pos = int((y==1).sum())
             spw   = n_neg / max(n_pos, 1)
             self.model = self._build_clf(spw, n_samples=n)
-            self.model.fit(X_scaled, y)
 
-            proba = self.model.predict_proba(X_scaled)[:, 1]
-            # Cross-val AUC only when n is large enough to be reliable and fast
-            if n >= 500:
-                from sklearn.model_selection import cross_val_score
-                cv_folds = min(5, max(2, n // 200))
-                try:
-                    cv_scores = cross_val_score(
-                        self._build_clf(spw, n_samples=n), X_scaled, y,
-                        cv=cv_folds, scoring="roc_auc", n_jobs=1)
-                    auc = float(cv_scores.mean())
-                except Exception:
-                    auc = float(roc_auc_score(y, proba))
+            # ── Date-based train/test split (prevents data leakage) ────────────
+            # Use last 20% of rows as held-out test set when we have enough data.
+            # This simulates real prediction: train on past, test on recent.
+            if n >= 200:
+                split = int(n * 0.80)
+                X_tr, X_te = X_scaled[:split], X_scaled[split:]
+                y_tr, y_te = y[:split],         y[split:]
             else:
-                auc = float(roc_auc_score(y, proba))
+                X_tr, X_te, y_tr, y_te = X_scaled, X_scaled, y, y
+
+            self.model.fit(X_tr, y_tr)
+
+            # ── Isotonic calibration on held-out data ──────────────────────────
+            # Ensures a 35% prediction actually hits ~35% of the time.
+            # Only fit calibrator when held-out set is large enough.
+            if len(y_te) >= 30 and len(np.unique(y_te)) > 1:
+                raw_proba = self.model.predict_proba(X_te)[:, 1]
+                self.calibrator = IsotonicRegression(out_of_bounds="clip")
+                self.calibrator.fit(raw_proba, y_te)
+                proba_te = self.calibrator.predict(raw_proba)
+                auc = float(roc_auc_score(y_te, proba_te))
+                # Also get in-sample proba for brier
+                proba_all = self.calibrator.predict(
+                    self.model.predict_proba(X_scaled)[:, 1])
+            else:
+                proba_te  = self.model.predict_proba(X_te)[:, 1]
+                proba_all = self.model.predict_proba(X_scaled)[:, 1]
+                auc = float(roc_auc_score(y_te, proba_te))
+
+            proba = proba_all
 
             self.metrics = {
                 "train_auc":   auc,
@@ -167,7 +192,10 @@ class SportModel:
                 aligned[c] = X[c].fillna(0)
         Xs = self.scaler.transform(aligned.values.astype(np.float32))
         if self.mode == "classify":
-            return self.model.predict_proba(Xs)[:, 1]
+            raw = self.model.predict_proba(Xs)[:, 1]
+            if self.calibrator is not None:
+                return self.calibrator.predict(raw)
+            return raw
         return self.model.predict(Xs)
 
     def save(self):
@@ -175,6 +203,7 @@ class SportModel:
         joblib.dump(self.scaler,        self._scaler_path)
         joblib.dump(self.feature_names, self._features_path)
         joblib.dump(self.metrics,       self._metrics_path)
+        joblib.dump(self.calibrator,    self._model_path.replace("_model.", "_calibrator."))
 
     def load(self) -> bool:
         try:
@@ -182,7 +211,13 @@ class SportModel:
             self.scaler        = joblib.load(self._scaler_path)
             self.feature_names = joblib.load(self._features_path)
             self.metrics       = joblib.load(self._metrics_path)
-            self.is_trained    = True
+            # Load calibrator if it exists (may not exist for old saved models)
+            cal_path = self._model_path.replace("_model.", "_calibrator.")
+            try:
+                self.calibrator = joblib.load(cal_path)
+            except FileNotFoundError:
+                self.calibrator = None
+            self.is_trained = True
             return True
         except FileNotFoundError:
             return False

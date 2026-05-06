@@ -47,7 +47,7 @@ _alias("config.settings",             "config")
 
 # Core models
 _alias("core.models.sport_model",     "sport_model")
-_alias("core.models.nhl_model",       "model_trainer")
+_alias("core.models.nhl_model",       "model_trainer")  # NHLModel / backward-compat wrapper
 
 # Core features
 _alias("core.features.nhl_features",  "feature_engineering")

@@ -53,6 +53,11 @@ class GoalscorerModel:
         """
         Add goal_probability and confidence columns to prediction_df.
         Returns the enriched DataFrame sorted by goal_probability desc.
+
+        IMPORTANT: Model output is clipped to a physics-based ceiling derived
+        from the player's own shot volume and shooting percentage. This prevents
+        contextual features (weak goalie, home ice) from inflating predictions
+        for players who barely shoot (e.g. 4th-line D with 0 goals).
         """
         if not self.is_trained:
             raise RuntimeError("Model not trained.")
@@ -61,12 +66,48 @@ class GoalscorerModel:
         X = prediction_df[feat_cols].fillna(0)
         probs = self._model.predict(X)
         prediction_df = prediction_df.copy()
-        prediction_df["goal_probability"] = probs
+
+        # ── Physics-based probability ceiling ────────────────────────────────
+        # A player cannot score more goals than their shot volume × sh% allows.
+        # Ceiling = shots_per_game × regressed_sh% × (1 / avg_save_pct_faced)
+        # This ensures a 0-goal/0.4-shot defender never projects at 0.60.
+        LEAGUE_AVG_SH_PCT  = 0.104   # league avg shooting pct
+        BEST_CASE_GOALS_PER_SHOT = 0.130  # facing a .870 sv% goalie
+        K_SHOTS = 150   # shots before we fully trust individual sh%
+
+        ceilings = []
+        for _, row in prediction_df.iterrows():
+            shots_pg  = float(row.get("season_shots_pg",
+                         row.get("rolling_5g_shots", 0)) or 0)
+            gp        = max(int(row.get("gp_season", row.get("gp", 1))), 1)
+            s_goals   = int(row.get("season_goals", 0))
+            total_shots = shots_pg * gp
+            raw_sh    = s_goals / max(total_shots, 1)
+
+            # Regress shooting pct toward league avg
+            w         = total_shots / (total_shots + K_SHOTS)
+            reg_sh    = w * raw_sh + (1 - w) * LEAGUE_AVG_SH_PCT
+
+            # Ceiling: shots/game × best-case shooting pct
+            ceiling   = shots_pg * min(reg_sh * 1.5, BEST_CASE_GOALS_PER_SHOT)
+            ceiling   = max(0.02, min(ceiling, 0.65))  # bounds
+            ceilings.append(ceiling)
+
+        # Apply ceiling — model cannot exceed what the player's stats support
+        raw_probs    = np.array(probs)
+        ceiling_arr  = np.array(ceilings)
+        clipped      = np.minimum(raw_probs, ceiling_arr)
+
+        # Soft blend so we don't hard-clip stars (they should be near ceiling anyway)
+        # 90% ceiling-clipped, 10% raw — preserves ranking, prevents absurd outliers
+        final_probs  = 0.90 * clipped + 0.10 * np.minimum(raw_probs, 0.65)
+        prediction_df["goal_probability"] = np.round(final_probs, 4)
+        prediction_df["prob_ceiling"]     = np.round(ceiling_arr, 4)
 
         def _conf(p):
-            if p >= 0.35: return "Elite"
-            if p >= 0.25: return "High"
-            if p >= 0.15: return "Medium"
+            if p >= 0.32: return "Elite"
+            if p >= 0.22: return "High"
+            if p >= 0.14: return "Medium"
             return "Low"
 
         prediction_df["confidence"] = prediction_df["goal_probability"].apply(_conf)

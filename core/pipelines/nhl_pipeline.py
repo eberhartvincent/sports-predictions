@@ -231,8 +231,29 @@ class NHLPipeline:
 
                     if len(plogs) < MIN_GP:
                         continue
-                    if _days_since(plogs["game_date"].iloc[-1]) > NHL_INACTIVITY_DAYS:
+
+                    days_since_last = _days_since(plogs["game_date"].iloc[-1])
+
+                    # Hard exclude: hasn't played in 30+ days (long-term IR)
+                    if days_since_last > NHL_INACTIVITY_DAYS:
                         continue
+
+                    # Soft exclude: hasn't played in 7+ days during active season
+                    # This catches players on IR who the roster API misses.
+                    # Exception: if their team also hasn't played in 7 days (bye/schedule)
+                    # we don't penalise them.
+                    if days_since_last > 7:
+                        # Check if the team has any games in the last 7 days
+                        team_logs = self._all_game_logs[
+                            self._all_game_logs["team"] == team
+                        ] if not self._all_game_logs.empty else pd.DataFrame()
+                        if not team_logs.empty:
+                            team_last = _days_since(team_logs["game_date"].max())
+                            # If team played recently but player didn't — they're injured/scratched
+                            if team_last <= 3 and days_since_last > 7:
+                                _p(f"Skipping {name} — {days_since_last}d since last game "
+                                   f"(team played {team_last}d ago)")
+                                continue
 
                     feat = build_prediction_row(
                         player_id=pid_int or 0,
@@ -249,7 +270,27 @@ class NHLPipeline:
                     # Use pre-computed TOI rank
                     feat["toi_rank"] = toi_ranks.get(pid, 0)
 
-                    feat["game_label"]        = f"{away} @ {home}"
+                    # ── Minimum threat threshold ──────────────────────────────
+                    # Exclude players who are statistically not a goal-scoring
+                    # threat. Defenders with 0 goals and <0.5 shots/game are
+                    # roster fillers, not picks worth showing.
+                    season_goals  = int(plogs["goals"].sum())
+                    season_shots  = int(plogs["shots"].sum()) if "shots" in plogs.columns else 0
+                    shots_per_game= season_shots / max(len(plogs), 1)
+                    games_played  = len(plogs)
+
+                    # Defenders (D) need at least 1 goal OR 1.2+ shots/game
+                    if pos == "D":
+                        if season_goals == 0 and shots_per_game < 1.2:
+                            continue
+
+                    # Forwards need at least 1 goal OR 0.8+ shots/game
+                    # (early-season exception: if < 15 GP use shots only)
+                    elif pos in ("L","R","C","F","LW","RW","W"):
+                        if games_played >= 15 and season_goals == 0 and shots_per_game < 0.8:
+                            continue
+                        elif games_played < 15 and shots_per_game < 0.5:
+                            continue
                     feat["away_team"]         = away
                     feat["home_team"]         = home
                     feat["position"]          = pos

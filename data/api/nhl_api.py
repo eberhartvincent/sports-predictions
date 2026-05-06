@@ -346,7 +346,7 @@ def get_team_injuries(team_abbrev: str) -> set:
     Cache TTL is 30 min so moves within a day are caught quickly.
     """
     cache_key = f"injuries_{team_abbrev}"
-    cached = _load_cache(cache_key, max_age_minutes=30)
+    cached = _load_cache(cache_key, max_age_minutes=15)   # short TTL — injuries move fast
     if cached is not None:
         return set(cached)
 

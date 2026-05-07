@@ -102,7 +102,11 @@ def tier_stats(df, tier_col="conf", prob_col="pred_prob", label_col="scored"):
 
 def backtest_nhl(days: int) -> dict:
     log("NHL backtest…")
-    hist_files = sorted(HIST_DIR.glob("nhl_*.parquet")) if HIST_DIR.exists() else []
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    hist_files = sorted(
+        f for f in HIST_DIR.glob("nhl_*.parquet")
+        if f.stem.replace("nhl_","") < today  # only past dates — today's games aren't over
+    ) if HIST_DIR.exists() else []
     if not hist_files:
         return {"sport":"nhl","message":"No history yet — accumulates daily.","rows":[]}
 
@@ -209,7 +213,11 @@ def aggregate_nhl(rows: list) -> dict:
 
 def backtest_mlb(days: int) -> dict:
     log("MLB backtest…")
-    hist_files = sorted(HIST_DIR.glob("mlb_*.parquet")) if HIST_DIR.exists() else []
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    hist_files = sorted(
+        f for f in HIST_DIR.glob("mlb_*.parquet")
+        if f.stem.replace("mlb_","") < today
+    ) if HIST_DIR.exists() else []
     if not hist_files:
         return {"sport":"mlb","message":"No history yet.","rows":[]}
 
@@ -355,7 +363,11 @@ def aggregate_mlb(rows: list) -> dict:
 
 def backtest_nba(days: int) -> dict:
     log("NBA backtest…")
-    hist_files = sorted(HIST_DIR.glob("nba_*.parquet")) if HIST_DIR.exists() else []
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    hist_files = sorted(
+        f for f in HIST_DIR.glob("nba_*.parquet")
+        if f.stem.replace("nba_","") < today
+    ) if HIST_DIR.exists() else []
     if not hist_files:
         return {"sport":"nba","message":"No history yet.","rows":[]}
 

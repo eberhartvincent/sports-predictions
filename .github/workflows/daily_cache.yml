@@ -84,13 +84,14 @@ jobs:
 
           # Fetch latest from origin so we commit on top of any changes
           # made since checkout (e.g. code pushes during the workflow run).
-          # Use ours strategy for prediction files — the workflow always wins.
           git fetch origin main
           git checkout origin/main -- . 2>/dev/null || true
 
           # Re-add the freshly generated prediction files on top
           git add -f data/cache/predictions/*.parquet 2>/dev/null || true
           git add -f data/cache/predictions/*.json    2>/dev/null || true
+          # Also commit daily history snapshots (needed for backtest)
+          git add -f data/cache/predictions/history/*.parquet 2>/dev/null || true
 
           if git diff --staged --quiet; then
             echo "No prediction changes to commit"

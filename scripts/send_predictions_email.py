@@ -379,10 +379,50 @@ def _nba_game_proj(projs: list) -> str:
 
 # ── Build full email ──────────────────────────────────────────────────────────
 
+def _apply_prob_ceiling(df):
+    """
+    Physics-based ceiling: a player cannot score more goals than
+    their shot volume × regressed shooting% allows.
+    Prevents 0-goal/low-shot players projecting at 0.60+.
+    """
+    if df.empty or "goal_probability" not in df.columns:
+        return df
+    import numpy as np
+    LEAGUE_AVG_SH = 0.104; BEST_CASE = 0.130; K = 150
+    ceilings = []
+    for _, row in df.iterrows():
+        shots_pg     = float(row.get("season_shots_pg",
+                       row.get("rolling_5g_shots", 0)) or 0)
+        gp           = max(int(row.get("gp_season", row.get("gp", 1))), 1)
+        season_goals = int(row.get("season_goals", 0))
+        total_shots  = shots_pg * gp
+        raw_sh       = season_goals / max(total_shots, 1)
+        w            = total_shots / (total_shots + K)
+        reg_sh       = w * raw_sh + (1 - w) * LEAGUE_AVG_SH
+        ceiling      = shots_pg * min(reg_sh * 1.5, BEST_CASE)
+        ceilings.append(max(0.02, min(ceiling, 0.65)))
+    raw   = df["goal_probability"].values.astype(float)
+    ceil  = np.array(ceilings)
+    final = 0.90 * np.minimum(raw, ceil) + 0.10 * np.minimum(raw, 0.65)
+    df    = df.copy()
+    df["goal_probability"] = np.round(final, 4)
+    def _conf(p):
+        if p >= 0.32: return "Elite"
+        if p >= 0.22: return "High"
+        if p >= 0.14: return "Medium"
+        return "Low"
+    df["confidence"] = df["goal_probability"].apply(_conf)
+    return df.sort_values("goal_probability", ascending=False).reset_index(drop=True)
+
+
 def build_html() -> str:
     nhl = load("nhl")
     mlb = load("mlb")
     nba = load("nba")
+
+    # Apply physics-based ceiling to NHL predictions before emailing
+    # Prevents 0-goal/low-shot players like Tyson Hinds appearing with 0.60 prob
+    nhl["predictions"] = _apply_prob_ceiling(nhl["predictions"])
 
     n_elite = 0
     for d in [nhl, mlb, nba]:

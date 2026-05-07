@@ -82,7 +82,13 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Only add the final prediction files — not API caches or model files
+          # Fetch latest from origin so we commit on top of any changes
+          # made since checkout (e.g. code pushes during the workflow run).
+          # Use ours strategy for prediction files — the workflow always wins.
+          git fetch origin main
+          git checkout origin/main -- . 2>/dev/null || true
+
+          # Re-add the freshly generated prediction files on top
           git add -f data/cache/predictions/*.parquet 2>/dev/null || true
           git add -f data/cache/predictions/*.json    2>/dev/null || true
 
@@ -93,8 +99,5 @@ jobs:
             git diff --staged --name-only
             DATE=$(TZ="America/New_York" date +%Y-%m-%d)
             git commit -m "chore: predictions ${DATE} [skip ci]"
-            git fetch origin main
-            git rebase origin/main
             git push origin main
-            git push
           fi

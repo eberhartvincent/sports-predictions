@@ -85,15 +85,15 @@ def render_nhl(selected_date_str, force_retrain):
         if k not in st.session_state:
             st.session_state[k] = v
 
-    from app.prediction_store import load_predictions, last_updated, predictions_date
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime, predictions_mtime
 
     # ── Load from pre-computed predictions first (instant) ────────────────────
     # warm_cache.py saves predictions daily — just read the files.
     # Admin can force a fresh run; viewers always see the saved output.
     # Reload if empty OR if session state has a different date than the saved file
-    _saved_date = predictions_date("nhl")
-    _session_date = st.session_state.get("_nhl_pred_date")
-    if st.session_state.nhl_predictions.empty or (_saved_date and _saved_date != _session_date):
+    _disk_mtime   = predictions_mtime("nhl")
+    _session_mtime = st.session_state.get("_nhl_mtime")
+    if st.session_state.nhl_predictions.empty or (_disk_mtime and _disk_mtime != _session_mtime):
         stored = load_predictions("nhl")
         if not stored["predictions"].empty:
             st.session_state.nhl_predictions  = _apply_prob_ceiling(stored["predictions"])
@@ -105,7 +105,7 @@ def render_nhl(selected_date_str, force_retrain):
             st.session_state._nhl_game_proj   = stored["game_projections"]
             st.session_state._nhl_metrics     = stored["metrics"]
             st.session_state.nhl_last_run     = last_updated("nhl") or "pre-computed"
-            st.session_state._nhl_pred_date    = _saved_date
+            st.session_state._nhl_mtime        = _disk_mtime
 
     # ── Admin: refresh button to re-run the full pipeline ─────────────────────
     if is_admin():

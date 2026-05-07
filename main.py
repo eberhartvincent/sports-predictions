@@ -109,9 +109,28 @@ with st.sidebar:
         if st.button("🔄 Warm Cache Now", use_container_width=True):
             with st.spinner("Running cache warm (~5 min)…"):
                 import subprocess, sys
-                r = subprocess.run([sys.executable, "scripts/warm_cache.py"],
-                                   capture_output=True, text=True, cwd=".")
-            st.success("Done!") if r.returncode==0 else st.error(r.stderr[-400:])
+                date_arg = st.session_state.selected_date.strftime("%Y-%m-%d") \
+                           if st.session_state.selected_date else \
+                           datetime.now(ET).strftime("%Y-%m-%d")
+                cmd = [sys.executable, "scripts/warm_cache.py",
+                       "--date", date_arg]
+                if force_retrain:
+                    import shutil
+                    shutil.rmtree("data/cache/model", ignore_errors=True)
+                r = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
+            if r.returncode == 0:
+                st.success("Done! Predictions updated.")
+                # Clear session state so tabs reload from fresh parquets
+                for key in ["nhl_predictions","nhl_pipeline","nhl_last_run",
+                            "_nhl_mtime","mlb_preds","mlb_pipeline","mlb_last_run",
+                            "_mlb_mtime","nba_preds","nba_pipeline","nba_last_run",
+                            "_nba_mtime"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.rerun()
+            else:
+                st.error("Cache warm failed:")
+                st.code(r.stderr[-800:] if r.stderr else r.stdout[-800:])
     else:
         st.markdown("### ℹ️ About")
         st.markdown("XGBoost predictions: rolling stats, pitcher matchups, "

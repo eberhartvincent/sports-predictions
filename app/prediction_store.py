@@ -1,4 +1,9 @@
-"""app/prediction_store.py — Load pre-computed predictions saved by warm_cache.py."""
+"""
+app/prediction_store.py — Load pre-computed predictions saved by warm_cache.py.
+
+Staleness detection uses file modification time so updates are caught
+even when the date hasn't changed (e.g. admin re-runs workflow same day).
+"""
 
 import json
 from datetime import datetime
@@ -13,64 +18,7 @@ ET       = ZoneInfo("America/New_York")
 
 
 def predictions_exist(sport: str) -> bool:
-    meta_file = PRED_DIR / f"{sport}_meta.json"
-    if not meta_file.exists():
-        return False
-    try:
-        meta  = json.loads(meta_file.read_text())
-        today = datetime.now(ET).strftime("%Y-%m-%d")
-        return meta.get("date","") == today
-    except Exception:
-        return False
-
-
-def load_predictions(sport: str) -> dict:
-    result = {
-        "predictions":         pd.DataFrame(),
-        "pitcher_predictions": pd.DataFrame(),
-        "game_projections":    [],
-        "games":               [],
-        "metrics":             {},
-        "meta":                {},
-        "updated_at":          None,
-    }
-    if not PRED_DIR.exists():
-        return result
-    try:
-        for key, fname, loader in [
-            ("predictions",         f"{sport}_predictions.parquet",        pd.read_parquet),
-            ("pitcher_predictions", f"{sport}_pitcher_predictions.parquet", pd.read_parquet),
-        ]:
-            f = PRED_DIR / fname
-            if f.exists():
-                result[key] = loader(f)
-        for key, fname in [
-            ("game_projections", f"{sport}_game_projections.json"),
-            ("games",            f"{sport}_games.json"),
-            ("metrics",          f"{sport}_metrics.json"),
-            ("meta",             f"{sport}_meta.json"),
-        ]:
-            f = PRED_DIR / fname
-            if f.exists():
-                result[key] = json.loads(f.read_text())
-        result["updated_at"] = result["meta"].get("updated_at")
-    except Exception as e:
-        print(f"[prediction_store] Error loading {sport}: {e}")
-    return result
-
-
-def is_stale(sport: str) -> bool:
-    """True if the file on disk is newer/different date than what may be in session state."""
-    meta_file = PRED_DIR / f"{sport}_meta.json"
-    if not meta_file.exists():
-        return False
-    try:
-        meta  = json.loads(meta_file.read_text())
-        saved = meta.get("date","")
-        today = datetime.now(ET).strftime("%Y-%m-%d")
-        return saved == today
-    except Exception:
-        return False
+    return (PRED_DIR / f"{sport}_predictions.parquet").exists()
 
 
 def predictions_date(sport: str) -> Optional[str]:
@@ -82,6 +30,65 @@ def predictions_date(sport: str) -> Optional[str]:
         return json.loads(meta_file.read_text()).get("date")
     except Exception:
         return None
+
+
+def predictions_mtime(sport: str) -> Optional[float]:
+    """
+    Returns file modification timestamp of the predictions parquet.
+    Used for staleness detection — newer file on disk = reload.
+    This catches updates even within the same day.
+    """
+    pred_file = PRED_DIR / f"{sport}_predictions.parquet"
+    if not pred_file.exists():
+        return None
+    try:
+        return pred_file.stat().st_mtime
+    except Exception:
+        return None
+
+
+def load_predictions(sport: str) -> dict:
+    """Load pre-computed predictions from disk. Returns instantly."""
+    result = {
+        "predictions":         pd.DataFrame(),
+        "pitcher_predictions": pd.DataFrame(),
+        "game_projections":    [],
+        "games":               [],
+        "metrics":             {},
+        "meta":                {},
+        "updated_at":          None,
+        "mtime":               None,
+    }
+
+    if not PRED_DIR.exists():
+        return result
+
+    try:
+        pred_file = PRED_DIR / f"{sport}_predictions.parquet"
+        if pred_file.exists():
+            result["predictions"] = pd.read_parquet(pred_file)
+            result["mtime"]       = pred_file.stat().st_mtime
+
+        pitcher_file = PRED_DIR / f"{sport}_pitcher_predictions.parquet"
+        if pitcher_file.exists():
+            result["pitcher_predictions"] = pd.read_parquet(pitcher_file)
+
+        for key, fname in [
+            ("game_projections", f"{sport}_game_projections.json"),
+            ("games",            f"{sport}_games.json"),
+            ("metrics",          f"{sport}_metrics.json"),
+            ("meta",             f"{sport}_meta.json"),
+        ]:
+            f = PRED_DIR / fname
+            if f.exists():
+                result[key] = json.loads(f.read_text())
+
+        result["updated_at"] = result["meta"].get("updated_at")
+
+    except Exception as e:
+        print(f"[prediction_store] Error loading {sport}: {e}")
+
+    return result
 
 
 def last_updated(sport: str) -> Optional[str]:

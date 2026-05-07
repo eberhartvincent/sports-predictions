@@ -51,12 +51,12 @@ def render_mlb(selected_date: str, force_retrain: bool):
             st.session_state[k] = v
 
 
-    from app.prediction_store import load_predictions, last_updated, predictions_date
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime, predictions_mtime
 
     # ── Load from pre-computed predictions (instant) ──────────────────────────
-    _saved_date = predictions_date("mlb")
-    _session_date = st.session_state.get("_mlb_pred_date")
-    if st.session_state.mlb_preds.empty or (_saved_date and _saved_date != _session_date):
+    _disk_mtime   = predictions_mtime("mlb")
+    _session_mtime = st.session_state.get("_mlb_mtime")
+    if st.session_state.mlb_preds.empty or (_disk_mtime and _disk_mtime != _session_mtime):
         stored = load_predictions("mlb")
         if not stored["predictions"].empty:
             st.session_state.mlb_preds         = stored["predictions"]
@@ -67,7 +67,7 @@ def render_mlb(selected_date: str, force_retrain: bool):
             ) if "team" in stored["predictions"].columns else []
             st.session_state._mlb_game_proj    = stored["game_projections"]
             st.session_state.mlb_last_run      = last_updated("mlb") or "pre-computed"
-            st.session_state._mlb_pred_date    = _saved_date
+            st.session_state._mlb_mtime        = _disk_mtime
 
     # ── Admin: refresh button ─────────────────────────────────────────────────
     if is_admin() and st.button("⚾ Refresh MLB Predictions", type="primary",

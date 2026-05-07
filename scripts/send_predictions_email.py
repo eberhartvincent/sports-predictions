@@ -399,7 +399,19 @@ def _apply_prob_ceiling(df):
         raw_sh       = season_goals / max(total_shots, 1)
         w            = total_shots / (total_shots + K)
         reg_sh       = w * raw_sh + (1 - w) * LEAGUE_AVG_SH
-        ceiling      = shots_pg * min(reg_sh * 1.5, BEST_CASE)
+
+        # Scale multiplier with sample size — small samples get no benefit of doubt
+        # < 20 shots: no upside multiplier (0 goals in 6 games = no ceiling boost)
+        # 20-100 shots: partial multiplier
+        # 100+ shots: full 1.5x multiplier
+        sample_mult  = min(1.5, 1.0 + 0.5 * min(total_shots / 100, 1.0))
+        ceiling      = shots_pg * min(reg_sh * sample_mult, BEST_CASE)
+
+        # Hard cap: 0-goal players with < 15 GP get a very low ceiling
+        # regardless of shot volume (noise in small samples)
+        if season_goals == 0 and gp < 15:
+            ceiling = min(ceiling, 0.08)
+
         ceilings.append(max(0.02, min(ceiling, 0.65)))
     raw   = df["goal_probability"].values.astype(float)
     ceil  = np.array(ceilings)

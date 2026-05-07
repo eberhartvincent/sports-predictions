@@ -43,7 +43,11 @@ def _apply_prob_ceiling(df: pd.DataFrame) -> pd.DataFrame:
         raw_sh      = season_goals / max(total_shots, 1)
         w           = total_shots / (total_shots + K_SHOTS)
         reg_sh      = w * raw_sh + (1 - w) * LEAGUE_AVG_SH
-        ceiling     = shots_pg * min(reg_sh * 1.5, BEST_CASE_RATE)
+        # Scale multiplier with sample — 0-goal players with < 15 GP get hard cap
+        sample_mult = min(1.5, 1.0 + 0.5 * min(total_shots / 100, 1.0))
+        ceiling     = shots_pg * min(reg_sh * sample_mult, BEST_CASE_RATE)
+        if season_goals == 0 and gp < 15:
+            ceiling = min(ceiling, 0.08)
         ceilings.append(max(0.02, min(ceiling, 0.65)))
 
     import numpy as np
@@ -65,7 +69,7 @@ def _apply_prob_ceiling(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def render_nhl(selected_date_str, force_retrain):
-    from config.settings import NHL_TEAMS, CURRENT_SEASON
+    from config import NHL_TEAMS, CURRENT_SEASON
     from core.pipelines.nhl_pipeline import NHLPipeline
     from app.auth import is_admin
 

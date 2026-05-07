@@ -113,13 +113,12 @@ def nhl_section(data: dict) -> str:
     if df.empty:
         return html + no_data("No NHL data available.")
 
-    elite = df[df["confidence"] == "Elite"].sort_values(
-        "goal_probability", ascending=False)
+    elite = df.sort_values("goal_probability", ascending=False).head(TOP_N)
 
     if elite.empty:
-        return html + no_data("No Elite-tier NHL picks today.")
+        html += no_data("No NHL picks today.")
 
-    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} elite picks today</p>'
+    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} picks today</p>'
     html += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
     html += table_header("#","Player","Team","Opp","Matchup",
                          "Goal Prob","Proj Ast","Proj Pts","Proj SOG","Szn G/A")
@@ -189,13 +188,12 @@ def mlb_section(data: dict) -> str:
     if df.empty:
         return html + no_data("No MLB data available.")
 
-    elite = df[df["confidence"] == "Elite"].sort_values(
-        "proj_hrr", ascending=False) if "proj_hrr" in df.columns else pd.DataFrame()
+    elite = df.sort_values("proj_hrr", ascending=False).head(TOP_N) if "proj_hrr" in df.columns else df.head(TOP_N)
 
     if elite.empty:
-        return html + no_data("No Elite-tier MLB picks today.")
+        html += no_data("No MLB picks today.")
 
-    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} elite picks today</p>'
+    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} picks today</p>'
     html += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
     html += table_header("#","Player","Team","Opp","H+R+RBI","Proj H",
                          "Proj HR","Proj RBI","Proj R","Proj TB","Proj K","vs P")
@@ -307,13 +305,12 @@ def nba_section(data: dict) -> str:
     if df.empty:
         return html + no_data("No NBA data available.")
 
-    elite = df[df["confidence"] == "Elite"].sort_values(
-        "proj_pts", ascending=False) if "proj_pts" in df.columns else pd.DataFrame()
+    elite = df.sort_values("proj_pts", ascending=False).head(TOP_N) if "proj_pts" in df.columns else df.head(TOP_N)
 
     if elite.empty:
-        return html + no_data("No Elite-tier NBA picks today.")
+        html += no_data("No NBA picks today.")
 
-    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} elite picks today</p>'
+    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} picks today</p>'
     html += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
     html += table_header("#","Player","Team","Opp","Proj Pts","Proj Reb",
                          "Proj Ast","Proj 3PM","Proj Stk","DD Prob","Szn Avg")
@@ -436,10 +433,7 @@ def build_html() -> str:
     # Prevents 0-goal/low-shot players like Tyson Hinds appearing with 0.60 prob
     nhl["predictions"] = _apply_prob_ceiling(nhl["predictions"])
 
-    n_elite = 0
-    for d in [nhl, mlb, nba]:
-        if not d["predictions"].empty and "confidence" in d["predictions"].columns:
-            n_elite += int((d["predictions"]["confidence"]=="Elite").sum())
+    n_picks = sum(min(TOP_N, len(d["predictions"])) for d in [nhl, mlb, nba] if not d["predictions"].empty)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -465,7 +459,7 @@ def build_html() -> str:
     <p style="color:#90caf9;margin:6px 0 0;font-size:15px;">{TODAY_LONG}</p>
     <div style="margin-top:14px;display:inline-block;background:rgba(255,255,255,.15);
       border-radius:20px;padding:6px 16px;color:#fff;font-size:13px;font-weight:600;">
-      {n_elite} Elite picks across NHL · MLB · NBA
+      {n_picks} Top picks across NHL · MLB · NBA
     </div>
   </td></tr>
 
@@ -494,7 +488,7 @@ def build_html() -> str:
 
 def send_email(html: str, sender: str, password: str, recipients: list):
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"🏆 Sports Predictor — {TODAY_SHORT} Elite Picks"
+    msg["Subject"] = f"🏆 Sports Predictor — {TODAY_SHORT} Top Picks"
     msg["From"]    = sender
     msg["To"]      = ", ".join(recipients)
     msg.attach(MIMEText(html, "html"))

@@ -171,7 +171,73 @@ def _nhl_game_proj(projs: list) -> str:
     return html
 
 
-# ── MLB ───────────────────────────────────────────────────────────────────────
+def _mlb_pitcher_table(preds: "pd.DataFrame") -> str:
+    if preds.empty: return ""
+    html = ('<div style="margin-top:18px;">'
+            '<h3 style="font-size:13px;color:#495057;margin:0 0 8px;">'
+            '⚾ Starting Pitcher Projections</h3>'
+            '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">')
+    html += table_header("Pitcher","Team","Opp","Proj K","Proj IP","ERA","xERA")
+    for i,(_, r) in enumerate(preds.head(10).iterrows()):
+        html += row_start(i)
+        html += td(f'<strong>{r.get("player_name","")}</strong>')
+        html += td(r.get("team",""), color="#1565c0", bold=True)
+        html += td(r.get("opponent",""), color="#6c757d")
+        html += proj_cell(float(r.get("proj_k",0)), color="#8e44ad")
+        html += proj_cell(float(r.get("proj_ip",0)), color="#16a085")
+        html += td(f'{float(r.get("era",0)):.2f}', color="#6c757d")
+        html += td(f'{float(r.get("xera",r.get("era",0))):.2f}', color="#6c757d")
+        html += '</tr>'
+    html += '</table></div>'
+    return html
+
+
+def _mlb_game_proj(projs: list) -> str:
+    if not projs: return ""
+    html = ('<div style="margin-top:18px;">'
+            '<h3 style="font-size:13px;color:#495057;margin:0 0 8px;">'
+            '🎰 MLB Game Projections</h3>'
+            '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">')
+    html += table_header("Matchup","Favourite","Total","Best Bet","Weather")
+    for i, p in enumerate(projs):
+        away = p.get("away_team",""); home = p.get("home_team","")
+        rec  = p.get("recommendation",""); line = p.get("best_ou_line","")
+        prob = float(p.get("best_ou_prob",0))
+        fav  = p.get("favourite","")
+        rc   = "#c0392b" if rec=="OVER" else "#2980b9"
+        weather = p.get("weather","")
+        html += row_start(i)
+        html += td(f'<strong>{away} @ {home}</strong>')
+        html += td(f'<span style="font-weight:700;">{fav}</span>', color="#27ae60")
+        html += td(f'{float(p.get("total_proj_runs",0)):.1f} runs')
+        html += td(f'<span style="color:{rc};font-weight:700;">{rec} {line} ({prob:.0%})</span>')
+        html += td(weather[:30] if weather else "—", color="#6c757d")
+        html += '</tr>'
+    html += '</table></div>'
+    return html
+
+
+def _nba_game_proj(projs: list) -> str:
+    if not projs: return ""
+    html = ('<div style="margin-top:18px;">'
+            '<h3 style="font-size:13px;color:#495057;margin:0 0 8px;">'
+            '🎰 NBA Game Projections</h3>'
+            '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">')
+    html += table_header("Matchup","Favourite","Total","Spread")
+    for i, p in enumerate(projs):
+        away = p.get("away_team",""); home = p.get("home_team","")
+        fav  = p.get("favourite","")
+        spread = p.get("proj_spread","")
+        html += row_start(i)
+        html += td(f'<strong>{away} @ {home}</strong>')
+        html += td(f'<span style="font-weight:700;">{fav}</span>', color="#27ae60")
+        html += td(f'{float(p.get("total_proj_pts",0)):.0f} pts')
+        html += td(str(spread), color="#6c757d")
+        html += '</tr>'
+    html += '</table></div>'
+    return html
+
+
 # ── MLB ───────────────────────────────────────────────────────────────────────
 
 def mlb_section(data: dict) -> str:

@@ -16,6 +16,14 @@ from nhl_pipeline import NHLPipeline
 
 ET = ZoneInfo("America/New_York")
 
+# Sort column → which conf_ column reflects that category
+SORT_TO_CONF = {
+    "goal_probability":   "conf_goals",
+    "projected_points":   "conf_goals",
+    "projected_assists":  "conf_goals",
+    "projected_sog":      "conf_sog",
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,7 +32,6 @@ def confidence_badge(conf):
          "Medium": "badge-medium", "Low": "badge-low"}
     return f'<span class="{m.get(str(conf), "badge-low")}">{conf}</span>'
 
-<<<<<<< HEAD
 
 def make_bar(val, max_val, colour, fmt=".2f"):
     pct = min(val / max_val * 100, 100) if max_val > 0 else 0
@@ -41,14 +48,13 @@ def make_bar(val, max_val, colour, fmt=".2f"):
 # ── Session state init ────────────────────────────────────────────────────────
 
 def _init_state():
-    defaults = {
+    for k, v in {
         "nhl_predictions": pd.DataFrame(),
         "nhl_pipeline":    None,
         "nhl_last_run":    None,
         "_nhl_mtime":      None,
         "_nhl_date":       None,
-    }
-    for k, v in defaults.items():
+    }.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
@@ -62,159 +68,19 @@ def render_nhl(date_str: str):
     is_today  = (date_str is None or date_str == today_str)
     selected  = date_str or today_str
 
-    # ── Auto-load predictions ─────────────────────────────────────────────────
+    # ── Auto-load ─────────────────────────────────────────────────────────────
     hist_file = (
         Path("data/cache/predictions/history") / f"nhl_{selected}.parquet"
         if not is_today else None
     )
-
     disk_mtime    = predictions_mtime("nhl")
     session_mtime = st.session_state.get("_nhl_mtime")
     session_date  = st.session_state.get("_nhl_date")
 
-    need_reload = (
-        st.session_state.nhl_predictions.empty
-        or session_date != selected
-        or (is_today and disk_mtime and disk_mtime != session_mtime)
-    )
-
-    if need_reload:
+    if (st.session_state.nhl_predictions.empty
+            or session_date != selected
+            or (is_today and disk_mtime and disk_mtime != session_mtime)):
         if not is_today and hist_file and hist_file.exists():
-=======
-def _badge(conf):
-    m = {"Elite":"badge-elite","High":"badge-high","Medium":"badge-medium","Low":"badge-low"}
-    return f'<span class="{m.get(str(conf),"badge-low")}">{conf}</span>'
-
-
-def _bar(val, max_val, colour, fmt=".2f"):
-    pct = min(val/max_val*100, 100) if max_val > 0 else 0
-    return (f'<div style="display:flex;align-items:center;gap:5px;">'
-            f'<div style="flex:1;background:#1e2535;border-radius:5px;height:10px;overflow:hidden;">'
-            f'<div style="width:{pct:.0f}%;height:100%;background:{colour};border-radius:5px;"></div></div>'
-            f'<span style="font-weight:700;color:#e8ecf4;min-width:36px;font-size:.88rem;">{val:{fmt}}</span></div>')
-
-def _apply_prob_ceiling(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Apply physics-based probability ceiling to loaded predictions.
-    A player cannot score more goals than their shot volume × sh% allows.
-    Runs on every load so stale parquet files get corrected immediately.
-    """
-    if df.empty or "goal_probability" not in df.columns:
-        return df
-
-    LEAGUE_AVG_SH  = 0.104
-    BEST_CASE_RATE = 0.130
-    K_SHOTS        = 150
-
-    df = df.copy()
-    ceilings = []
-    for _, row in df.iterrows():
-        shots_pg    = float(row.get("season_shots_pg",
-                      row.get("rolling_5g_shots", 0)) or 0)
-        gp          = max(int(row.get("gp_season", row.get("gp", 1))), 1)
-        season_goals= int(row.get("season_goals", 0))
-        total_shots = shots_pg * gp
-        raw_sh      = season_goals / max(total_shots, 1)
-        w           = total_shots / (total_shots + K_SHOTS)
-        reg_sh      = w * raw_sh + (1 - w) * LEAGUE_AVG_SH
-        # Scale multiplier with sample — 0-goal players with < 15 GP get hard cap
-        sample_mult = min(1.5, 1.0 + 0.5 * min(total_shots / 100, 1.0))
-        ceiling     = shots_pg * min(reg_sh * sample_mult, BEST_CASE_RATE)
-        if season_goals == 0 and gp < 15:
-            ceiling = min(ceiling, 0.08)
-        ceilings.append(max(0.02, min(ceiling, 0.65)))
-
-    import numpy as np
-    raw_probs  = df["goal_probability"].values.astype(float)
-    ceil_arr   = np.array(ceilings)
-    clipped    = np.minimum(raw_probs, ceil_arr)
-    final      = 0.90 * clipped + 0.10 * np.minimum(raw_probs, 0.65)
-    df["goal_probability"] = np.round(final, 4)
-
-    def _conf(p):
-        if p >= 0.32: return "Elite"
-        if p >= 0.22: return "High"
-        if p >= 0.14: return "Medium"
-        return "Low"
-    df["confidence"] = df["goal_probability"].apply(_conf)
-    return df.sort_values("goal_probability", ascending=False).reset_index(drop=True)
-
-
-
-
-def render_nhl(selected_date_str):
-    from config import NHL_TEAMS, CURRENT_SEASON
-    from core.pipelines.nhl_pipeline import NHLPipeline
-    from app.auth import is_admin
-
-    ET = ZoneInfo("America/New_York")
-
-    # ── Session state defaults ────────────────────────────────────────────────
-    for k, v in {
-        "nhl_pipeline": None, "nhl_predictions": pd.DataFrame(),
-        "nhl_last_run": None, "nhl_running": False,
-        "nhl_teams": [], "nhl_games": [],
-        "nhl_auto_loaded": False,
-    }.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-    from app.prediction_store import load_predictions, last_updated, predictions_mtime
-    from pathlib import Path as _Path
-
-    # ── Load from pre-computed predictions first (instant) ────────────────────
-    # warm_cache.py saves predictions daily — just read the files.
-    # Admin can force a fresh run; viewers always see the saved output.
-    # Reload if empty OR if session state has a different date than the saved file
-    # If admin selected a past date, load from history parquet
-    _selected = date_str  # passed in from main.py
-    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
-    _is_today = (_selected is None or _selected == _today)
-    _hist_file = _Path("data/cache/predictions/history") / f"nhl_{_selected}.parquet" if _selected and not _is_today else None
-
-    _disk_mtime   = predictions_mtime("nhl")
-    _session_mtime = st.session_state.get("_nhl_mtime")
-    _session_date  = st.session_state.get("_nhl_date")
-    if st.session_state.nhl_predictions.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
-        # Load from history for past dates, today's parquet for today
-        _hist = Path("data/cache/predictions/history") / f"nhl_{date_str}.parquet" \
-                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
-        if _hist and _hist.exists():
-            import pandas as _pd
-            stored = dict(load_predictions("nhl"))
-            stored["predictions"] = _pd.read_parquet(_hist)
-        else:
-            stored = load_predictions("nhl")
-        if not stored["predictions"].empty:
-            st.session_state.nhl_predictions  = _apply_prob_ceiling(stored["predictions"])
-            st.session_state.nhl_games        = stored["games"]
-            st.session_state.nhl_teams        = sorted(
-                stored["predictions"]["team"].dropna().unique().tolist()
-            ) if "team" in stored["predictions"].columns else []
-            st.session_state.nhl_pipeline     = None   # no live pipeline object needed
-            st.session_state._nhl_game_proj   = stored["game_projections"]
-            st.session_state._nhl_metrics     = stored["metrics"]
-            st.session_state.nhl_last_run     = last_updated("nhl") or "pre-computed"
-            st.session_state._nhl_mtime        = _disk_mtime
-
-    # ── Admin: refresh button to re-run the full pipeline ─────────────────────
-    if is_admin():
-        if st.button("🏒 Refresh NHL Predictions", type="primary",
-                     use_container_width=True, key="nhl_load"):
-            st.session_state.nhl_running = True
-
-    # ── Pipeline execution (admin refresh only) ───────────────────────────────
-    if st.session_state.get("nhl_running", False):
-        st.session_state.nhl_running = False
-        pb   = st.progress(0.0)
-        stxt = st.empty()
-
-        def upd(msg, frac):
-            pb.progress(min(frac, 1.0))
-            stxt.markdown(f"⚙️ **{msg}**")
-
-        with st.spinner("Running NHL pipeline …"):
->>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
             try:
                 st.session_state.nhl_predictions = pd.read_parquet(hist_file)
                 st.session_state["_nhl_date"]    = selected
@@ -239,9 +105,8 @@ def render_nhl(selected_date_str):
     lu = last_updated("nhl")
     col_h, col_meta = st.columns([3, 1])
     with col_h:
-        date_label = "Today" if is_today else selected
         st.markdown(
-            f'<div class="section-header">🏒 NHL — {date_label}</div>',
+            f'<div class="section-header">🏒 NHL — {"Today" if is_today else selected}</div>',
             unsafe_allow_html=True,
         )
     with col_meta:
@@ -250,7 +115,7 @@ def render_nhl(selected_date_str):
         if not is_today and (hist_file is None or not hist_file.exists()):
             st.caption("No history available for this date.")
 
-    # ── Admin: run pipeline ───────────────────────────────────────────────────
+    # ── Admin pipeline ────────────────────────────────────────────────────────
     if is_admin() and is_today:
         with st.expander("⚙️ Admin — Run Pipeline", expanded=False):
             if st.button("▶ Run NHL Pipeline", key="nhl_run_btn"):
@@ -270,50 +135,97 @@ def render_nhl(selected_date_str):
                     except Exception as exc:
                         st.error(f"Pipeline error: {exc}")
 
-    # ── No data state ─────────────────────────────────────────────────────────
+    # ── No data ───────────────────────────────────────────────────────────────
     if preds.empty:
         if is_today:
             st.info("No NHL predictions loaded yet. "
-                    + ("Run the pipeline above." if is_admin() else
-                       "Predictions are generated automatically each morning."))
+                    + ("Run the pipeline above." if is_admin()
+                       else "Predictions are generated automatically each morning."))
         else:
             st.info(f"No saved predictions found for {selected}.")
         return
 
-    # ── Filters ───────────────────────────────────────────────────────────────
-    teams_in_preds = sorted(preds["team"].dropna().unique().tolist()) if "team" in preds.columns else []
-    games_in_preds = sorted(preds["game_label"].dropna().unique().tolist()) if "game_label" in preds.columns else []
+    # ── Build filter option lists ─────────────────────────────────────────────
+    teams_playing = sorted(preds["team"].dropna().unique().tolist()) if "team" in preds.columns else []
+    game_labels   = sorted(preds["game_label"].dropna().unique().tolist()) if "game_label" in preds.columns else []
 
-    fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 1])
+    sort_opts = {
+        "Proj Goals":   "goal_probability",
+        "Proj Points":  "projected_points",
+        "Proj Assists": "projected_assists",
+        "Proj SOG":     "projected_sog",
+    }
+
+    # ── Filter row ────────────────────────────────────────────────────────────
+    fc1, fc2, fc3, fc4, fc5, fc6 = st.columns([2, 2, 1.4, 1.4, 1.6, 1])
+
     with fc1:
-        sel_team = st.selectbox("Filter by team", ["All"] + teams_in_preds, key="nhl_team_filter")
+        st.markdown('<div class="filter-label">Team</div>', unsafe_allow_html=True)
+        team_opts = ["🌍 All Teams"] + [f"{t} — {NHL_TEAMS.get(t, t)}" for t in teams_playing]
+        sel_team  = st.selectbox("Team", team_opts, index=0,
+                                 label_visibility="collapsed", key="nhl_f_team")
+        flt_team  = None if sel_team == "🌍 All Teams" else sel_team.split(" — ")[0]
+
     with fc2:
-        sel_game = st.selectbox("Filter by game", ["All"] + games_in_preds, key="nhl_game_filter")
+        st.markdown('<div class="filter-label">Game</div>', unsafe_allow_html=True)
+        game_opts = ["🏒 All Games"] + game_labels
+        sel_game  = st.selectbox("Game", game_opts, index=0,
+                                 label_visibility="collapsed", key="nhl_f_game")
+        flt_game  = None if sel_game == "🏒 All Games" else sel_game
+
     with fc3:
-        conf_opts = ["All", "Elite", "High", "Medium", "Low"]
-        sel_conf  = st.selectbox("Min confidence", conf_opts, key="nhl_conf_filter")
+        st.markdown('<div class="filter-label">Position</div>', unsafe_allow_html=True)
+        sel_pos = st.selectbox("Position", ["All", "Forwards", "Defence"],
+                               index=0, label_visibility="collapsed", key="nhl_f_pos")
+
     with fc4:
-        top_n = st.selectbox("Show top", [25, 50, 100, 200], key="nhl_topn")
+        st.markdown('<div class="filter-label">Confidence</div>', unsafe_allow_html=True)
+        sel_conf = st.selectbox("Confidence", ["All Tiers", "Elite", "High", "Medium", "Low"],
+                                index=0, label_visibility="collapsed", key="nhl_f_conf")
+        flt_conf = None if sel_conf == "All Tiers" else sel_conf
 
-    disp = preds.copy()
-    if sel_team != "All":
-        disp = disp[disp["team"] == sel_team]
-    if sel_game != "All":
-        disp = disp[disp["game_label"] == sel_game]
-    if sel_conf != "All":
-        conf_order = {"Elite": 4, "High": 3, "Medium": 2, "Low": 1}
-        min_rank   = conf_order.get(sel_conf, 1)
-        disp = disp[disp["confidence"].map(lambda c: conf_order.get(str(c), 0)) >= min_rank]
+    with fc5:
+        st.markdown('<div class="filter-label">Sort By</div>', unsafe_allow_html=True)
+        sel_sort = st.selectbox("Sort By", list(sort_opts.keys()),
+                                index=0, label_visibility="collapsed", key="nhl_f_sort")
+        sort_col = sort_opts[sel_sort]
 
-    disp = disp.sort_values("goal_probability", ascending=False).head(top_n)
+    with fc6:
+        st.markdown('<div class="filter-label">Show</div>', unsafe_allow_html=True)
+        top_n = st.number_input("Show", min_value=5, max_value=200, value=25,
+                                step=5, label_visibility="collapsed", key="nhl_f_n")
+
+    # Active confidence column for the current sort
+    active_conf_col = SORT_TO_CONF.get(sort_col, "confidence")
+
+    # ── Apply filters ─────────────────────────────────────────────────────────
+    filt = preds.copy()
+    if flt_team:
+        filt = filt[filt["team"].astype(str).str.strip() == flt_team]
+    if flt_game:
+        filt = filt[filt["game_label"] == flt_game]
+    if sel_pos == "Forwards" and "position" in filt.columns:
+        filt = filt[~filt["position"].astype(str).str.upper().isin(["D", "G"])]
+    elif sel_pos == "Defence" and "position" in filt.columns:
+        filt = filt[filt["position"].astype(str).str.upper() == "D"]
+    if flt_conf:
+        conf_col_to_filter = active_conf_col if active_conf_col in filt.columns else "confidence"
+        filt = filt[filt[conf_col_to_filter].astype(str) == flt_conf]
+    if sort_col in filt.columns:
+        filt = filt.sort_values(sort_col, ascending=False)
+    disp = filt.head(int(top_n))
+
+    parts = [p for p in [flt_team, flt_game,
+                          sel_pos if sel_pos != "All" else None, flt_conf] if p]
+    st.caption(f"Showing {len(disp)} of {len(filt)} players"
+               + (f" — {' · '.join(parts)}" if parts else "")
+               + f" · sorted by {sel_sort}")
 
     if disp.empty:
-        st.warning("No players match the selected filters.")
+        st.info("No players match the current filters.")
         return
 
     # ── Player table ──────────────────────────────────────────────────────────
-    st.markdown(f"**{len(disp)} players** shown")
-
     grid   = "36px 1fr 55px 55px 85px 100px 90px 90px 90px 70px"
     hdrs   = ["#", "Player", "Team", "Opp", "Conf",
               "Goal Prob", "Proj SOG", "Proj Pts", "Proj Ast", "Season"]
@@ -332,7 +244,8 @@ def render_nhl(selected_date_str):
         name  = row.get("player_name", "")
         team  = row.get("team", "")
         opp   = row.get("opponent", "")
-        conf  = str(row.get("confidence", "Low"))
+        # Show the confidence tier that matches the active sort category
+        conf  = str(row.get(active_conf_col, row.get("confidence", "Low")))
         gp    = int(row.get("gp", 0))
         goals = int(row.get("season_goals", 0))
         shots = int(row.get("season_shots", 0))
@@ -387,14 +300,12 @@ def render_nhl(selected_date_str):
                     marker_color=cdf["g_colour"],
                     text=[f"{v:.2f}" for v in cdf["goal_probability"]],
                     textposition="outside",
-                    hovertemplate="<b>%{x}</b><br>Goal Prob: %{y:.3f}<extra></extra>",
                 ))
                 fig.update_layout(
                     title="Goal Probability", xaxis_tickangle=-40,
                     plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                     font=dict(color="#e8ecf4"),
-                    xaxis=dict(gridcolor="#1e2535"),
-                    yaxis=dict(gridcolor="#1e2535"),
+                    xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                     height=420, margin=dict(t=50, b=120),
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -405,14 +316,12 @@ def render_nhl(selected_date_str):
                         marker_color="#1a6b4a",
                         text=[f"{v:.1f}" for v in cdf["projected_sog"]],
                         textposition="outside",
-                        hovertemplate="<b>%{x}</b><br>Proj SOG: %{y:.1f}<extra></extra>",
                     ))
                     fig2.update_layout(
                         title="Projected Shots on Goal", xaxis_tickangle=-40,
                         plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                         font=dict(color="#e8ecf4"),
-                        xaxis=dict(gridcolor="#1e2535"),
-                        yaxis=dict(gridcolor="#1e2535"),
+                        xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                         height=420, margin=dict(t=50, b=120),
                     )
                     st.plotly_chart(fig2, use_container_width=True)
@@ -434,8 +343,7 @@ def render_nhl(selected_date_str):
                         title="Top 15 Feature Importances",
                         plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                         font=dict(color="#e8ecf4"),
-                        xaxis=dict(gridcolor="#1e2535"),
-                        yaxis=dict(gridcolor="#1e2535"),
+                        xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                         height=450, margin=dict(l=180, t=45),
                     )
                     st.plotly_chart(fig3, use_container_width=True)
@@ -449,7 +357,7 @@ def render_nhl(selected_date_str):
             m = getattr(pipeline, "model", None)
             if m and hasattr(m, "metrics") and m.metrics:
                 mc1, mc2, mc3 = st.columns(3)
-                mc1.metric("CV-AUC",   f"{m.metrics.get('cv_auc', 0):.3f}")
+                mc1.metric("CV-AUC",    f"{m.metrics.get('cv_auc', 0):.3f}")
                 mc2.metric("Train AUC", f"{m.metrics.get('train_auc', 0):.3f}")
                 mc3.metric("Samples",   f"{m.metrics.get('n_samples', 0):,}")
             else:
@@ -460,8 +368,7 @@ def render_nhl(selected_date_str):
     st.divider()
     st.markdown(
         "<div style='text-align:center;color:#555;font-size:.75rem;'>"
-        "Data from NHL API · For entertainment only · "
-        "Predictions are probabilistic estimates"
+        "Data from NHL API · For entertainment only · Predictions are probabilistic estimates"
         "</div>",
         unsafe_allow_html=True,
     )

@@ -16,6 +16,17 @@ from mlb_pipeline import MLBPipeline
 
 ET = ZoneInfo("America/New_York")
 
+# Maps sort column → per-category confidence column
+SORT_TO_CONF = {
+    "proj_hits":  "conf_hits",
+    "proj_hr":    "conf_hr",
+    "proj_tb":    "conf_hits",   # TB correlates with hits confidence
+    "proj_rbi":   "conf_rbi",
+    "proj_runs":  "conf_runs",
+    "proj_k":     "conf_k",
+    "proj_hrr":   "conf_hrr",
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -37,97 +48,21 @@ def bar(val, max_val, colour, fmt=".2f"):
     )
 
 
-<<<<<<< HEAD
 # ── Session state init ────────────────────────────────────────────────────────
 
 def _init_state():
-    defaults = {
+    for k, v in {
         "mlb_preds":    pd.DataFrame(),
         "mlb_pipeline": None,
         "mlb_last_run": None,
         "_mlb_mtime":   None,
         "_mlb_date":    None,
-    }
-    for k, v in defaults.items():
-=======
-def render_mlb(selected_date: str):
-    # ── Session state ──────────────────────────────────────────────────────────
-    for k, v in {
-        "mlb_pipeline": None, "mlb_preds": pd.DataFrame(),
-        "mlb_pitcher_preds": pd.DataFrame(),
-        "mlb_running": False, "mlb_last_run": None,
-        "mlb_games": [], "mlb_teams": [],
-        "mlb_view": "batters",
     }.items():
->>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
         if k not in st.session_state:
             st.session_state[k] = v
 
 
-<<<<<<< HEAD
 # ── Main renderer ─────────────────────────────────────────────────────────────
-=======
-    from app.prediction_store import load_predictions, last_updated, predictions_mtime
-    from pathlib import Path as _Path
-
-    # ── Load from pre-computed predictions (instant) ──────────────────────────
-    # If admin selected a past date, load from history parquet
-    _selected = date_str  # passed in from main.py
-    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
-    _is_today = (_selected is None or _selected == _today)
-    _hist_file = _Path("data/cache/predictions/history") / f"mlb_{_selected}.parquet" if _selected and not _is_today else None
-
-    _disk_mtime   = predictions_mtime("mlb")
-    _session_mtime = st.session_state.get("_mlb_mtime")
-    _session_date  = st.session_state.get("_mlb_date")
-    if st.session_state.mlb_preds.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
-        # Load from history for past dates, today's parquet for today
-        _hist = Path("data/cache/predictions/history") / f"mlb_{date_str}.parquet" \
-                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
-        if _hist and _hist.exists():
-            import pandas as _pd
-            stored = dict(load_predictions("mlb"))
-            stored["predictions"] = _pd.read_parquet(_hist)
-        else:
-            stored = load_predictions("mlb")
-        if not stored["predictions"].empty:
-            st.session_state.mlb_preds         = stored["predictions"]
-            st.session_state.mlb_pitcher_preds = stored["pitcher_predictions"]
-            st.session_state.mlb_games         = stored["games"]
-            st.session_state.mlb_teams         = sorted(
-                stored["predictions"]["team"].dropna().unique().tolist()
-            ) if "team" in stored["predictions"].columns else []
-            st.session_state._mlb_game_proj    = stored["game_projections"]
-            st.session_state.mlb_last_run      = last_updated("mlb") or "pre-computed"
-            st.session_state._mlb_mtime        = _disk_mtime
-
-    # ── Admin: refresh button ─────────────────────────────────────────────────
-    if is_admin() and st.button("⚾ Refresh MLB Predictions", type="primary",
-                  use_container_width=True, key="mlb_load"):
-        st.session_state.mlb_running = True
-
-    if st.session_state.mlb_running:
-        st.session_state.mlb_running = False
-        pb = st.progress(0.0); stxt = st.empty()
-        def upd(msg, f):
-            pb.progress(min(f,1.0)); stxt.markdown(f"⚙️ **{msg}**")
-        with st.spinner("Running MLB pipeline …"):
-            try:
-                pipe  = MLBPipeline()
-                preds = pipe.run(force_retrain=force_retrain,
-                                 status_callback=upd, date=selected_date)
-                st.session_state.mlb_pipeline      = pipe
-                st.session_state.mlb_preds         = preds
-                st.session_state.mlb_pitcher_preds = getattr(pipe,"pitcher_predictions",pd.DataFrame())
-                st.session_state.mlb_games         = pipe.get_games()
-                st.session_state.mlb_teams         = pipe.get_teams_playing()
-                st.session_state._mlb_game_proj    = pipe.game_proj
-                st.session_state.mlb_last_run      = datetime.now(ET).strftime("%I:%M %p ET")
-                pb.progress(1.0); stxt.markdown("✅ **Done!**"); time.sleep(0.5)
-            except Exception as e:
-                st.error(f"MLB Pipeline error: {e}"); st.exception(e)
-        pb.empty(); stxt.empty(); st.rerun()
->>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
 
 def render_mlb(date_str: str):
     _init_state()
@@ -136,45 +71,33 @@ def render_mlb(date_str: str):
     is_today  = (date_str is None or date_str == today_str)
     selected  = date_str or today_str
 
-    # ── Auto-load predictions ─────────────────────────────────────────────────
-    # For a past date: load from history parquet if it exists.
-    # For today: load from the live prediction store, reloading if the file
-    # on disk is newer than what's in session state.
-
+    # ── Auto-load ─────────────────────────────────────────────────────────────
     hist_file = (
         Path("data/cache/predictions/history") / f"mlb_{selected}.parquet"
         if not is_today else None
     )
-
     disk_mtime    = predictions_mtime("mlb")
     session_mtime = st.session_state.get("_mlb_mtime")
     session_date  = st.session_state.get("_mlb_date")
 
-    need_reload = (
-        st.session_state.mlb_preds.empty
-        or session_date != selected
-        or (is_today and disk_mtime and disk_mtime != session_mtime)
-    )
-
-    if need_reload:
+    if (st.session_state.mlb_preds.empty
+            or session_date != selected
+            or (is_today and disk_mtime and disk_mtime != session_mtime)):
         if not is_today and hist_file and hist_file.exists():
-            # Load historical predictions from parquet
             try:
-                st.session_state.mlb_preds = pd.read_parquet(hist_file)
+                st.session_state.mlb_preds     = pd.read_parquet(hist_file)
                 st.session_state["_mlb_date"]  = selected
                 st.session_state["_mlb_mtime"] = None
             except Exception as e:
                 st.warning(f"Could not load history for {selected}: {e}")
                 st.session_state.mlb_preds = pd.DataFrame()
         elif is_today:
-            # Load today's predictions from prediction store
             df = load_predictions("mlb")
             if df is not None and not df.empty:
-                st.session_state.mlb_preds    = df
+                st.session_state.mlb_preds     = df
                 st.session_state["_mlb_mtime"] = disk_mtime
                 st.session_state["_mlb_date"]  = selected
         else:
-            # Past date with no history file
             st.session_state.mlb_preds = pd.DataFrame()
             st.session_state["_mlb_date"] = selected
 
@@ -185,9 +108,8 @@ def render_mlb(date_str: str):
     lu = last_updated("mlb")
     col_h, col_meta = st.columns([3, 1])
     with col_h:
-        date_label = "Today" if is_today else selected
         st.markdown(
-            f'<div class="section-header">⚾ MLB — {date_label}</div>',
+            f'<div class="section-header">⚾ MLB — {"Today" if is_today else selected}</div>',
             unsafe_allow_html=True,
         )
     with col_meta:
@@ -196,7 +118,7 @@ def render_mlb(date_str: str):
         if not is_today and (hist_file is None or not hist_file.exists()):
             st.caption("No history available for this date.")
 
-    # ── Admin: run pipeline ───────────────────────────────────────────────────
+    # ── Admin pipeline ────────────────────────────────────────────────────────
     if is_admin() and is_today:
         with st.expander("⚙️ Admin — Run Pipeline", expanded=False):
             if st.button("▶ Run MLB Pipeline", key="mlb_run_btn"):
@@ -208,7 +130,7 @@ def render_mlb(date_str: str):
                         st.session_state.mlb_pipeline = p
                         df2 = load_predictions("mlb")
                         if df2 is not None and not df2.empty:
-                            st.session_state.mlb_preds    = df2
+                            st.session_state.mlb_preds     = df2
                             st.session_state["_mlb_mtime"] = predictions_mtime("mlb")
                             st.session_state["_mlb_date"]  = selected
                         st.success(f"Done in {time.time()-t0:.1f}s")
@@ -216,44 +138,86 @@ def render_mlb(date_str: str):
                     except Exception as exc:
                         st.error(f"Pipeline error: {exc}")
 
-    # ── No data state ─────────────────────────────────────────────────────────
+    # ── No data ───────────────────────────────────────────────────────────────
     if preds.empty:
         if is_today:
             st.info("No MLB predictions loaded yet. "
-                    + ("Run the pipeline above." if is_admin() else
-                       "Predictions are generated automatically each morning."))
+                    + ("Run the pipeline above." if is_admin()
+                       else "Predictions are generated automatically each morning."))
         else:
             st.info(f"No saved predictions found for {selected}.")
         return
 
-    # ── Filters ───────────────────────────────────────────────────────────────
-    teams_in_preds = sorted(preds["team"].dropna().unique().tolist()) if "team" in preds.columns else []
-    fc1, fc2, fc3 = st.columns([2, 2, 1])
-    with fc1:
-        sel_team = st.selectbox("Filter by team", ["All"] + teams_in_preds, key="mlb_team_filter")
-    with fc2:
-        conf_opts = ["All", "Elite", "High", "Medium", "Low"]
-        sel_conf  = st.selectbox("Min confidence", conf_opts, key="mlb_conf_filter")
-    with fc3:
-        top_n = st.selectbox("Show top", [25, 50, 100, 200], key="mlb_topn")
+    # ── Build filter option lists ─────────────────────────────────────────────
+    teams   = sorted(preds["team"].dropna().unique().tolist()) if "team" in preds.columns else []
+    game_labels = sorted(preds["game_label"].dropna().unique().tolist()) if "game_label" in preds.columns else []
 
-    disp = preds.copy()
-    if sel_team != "All":
-        disp = disp[disp["team"] == sel_team]
-    if sel_conf != "All":
-        conf_order = {"Elite": 4, "High": 3, "Medium": 2, "Low": 1}
-        min_rank   = conf_order.get(sel_conf, 1)
-        disp = disp[disp["confidence"].map(lambda c: conf_order.get(str(c), 0)) >= min_rank]
+    sort_map = {
+        "Proj Hits": "proj_hits",
+        "Proj HR":   "proj_hr",
+        "Proj TB":   "proj_tb",
+        "Proj RBI":  "proj_rbi",
+        "Proj Runs": "proj_runs",
+        "Proj K":    "proj_k",
+        "H+R+RBI":   "proj_hrr",
+    }
 
-    disp = disp.head(top_n)
+    # ── Filter row ────────────────────────────────────────────────────────────
+    f1, f2, f3, f4, f5 = st.columns([2, 2, 1.5, 1.8, 1])
+
+    with f1:
+        st.markdown('<div class="filter-label">Team</div>', unsafe_allow_html=True)
+        team_opts = ["⚾ All Teams"] + [f"{t} — {MLB_TEAM_NAMES.get(t, t)}" for t in teams]
+        sl = st.selectbox("Team", team_opts, index=0,
+                          label_visibility="collapsed", key="mlb_team")
+        ft = None if sl == "⚾ All Teams" else sl.split(" — ")[0]
+
+    with f2:
+        st.markdown('<div class="filter-label">Game</div>', unsafe_allow_html=True)
+        game_opts = ["⚾ All Games"] + game_labels
+        sg = st.selectbox("Game", game_opts, index=0,
+                          label_visibility="collapsed", key="mlb_game")
+        fg = None if sg == "⚾ All Games" else sg
+
+    with f3:
+        st.markdown('<div class="filter-label">Sort By</div>', unsafe_allow_html=True)
+        ss = st.selectbox("Sort", list(sort_map.keys()), index=0,
+                          label_visibility="collapsed", key="mlb_sort")
+        sc = sort_map[ss]
+
+    with f4:
+        st.markdown('<div class="filter-label">Confidence</div>', unsafe_allow_html=True)
+        sconf = st.selectbox("Conf", ["All", "Elite", "High", "Medium", "Low"],
+                             index=0, label_visibility="collapsed", key="mlb_conf")
+
+    with f5:
+        st.markdown('<div class="filter-label">Show</div>', unsafe_allow_html=True)
+        top_n = st.number_input("N", 5, 200, 25, 5,
+                                label_visibility="collapsed", key="mlb_n")
+
+    # Active confidence column for current sort
+    active_conf_col = SORT_TO_CONF.get(sc, "confidence")
+
+    # ── Apply filters ─────────────────────────────────────────────────────────
+    filt = preds.copy()
+    if ft:
+        filt = filt[filt["team"] == ft]
+    if fg:
+        filt = filt[filt["game_label"] == fg]
+    if sconf != "All":
+        conf_col_to_filter = active_conf_col if active_conf_col in filt.columns else "confidence"
+        filt = filt[filt[conf_col_to_filter].astype(str) == sconf]
+    if sc in filt.columns:
+        filt = filt.sort_values(sc, ascending=False)
+    disp = filt.head(int(top_n))
+
+    st.caption(f"Showing {len(disp)} of {len(filt)} batters · sorted by {ss}")
 
     if disp.empty:
-        st.warning("No players match the selected filters.")
+        st.info("No batters match filters.")
         return
 
     # ── Player table ──────────────────────────────────────────────────────────
-    st.markdown(f"**{len(disp)} players** shown")
-
     grid   = "36px 1fr 55px 55px 85px 105px 80px 80px 80px 80px 70px"
     hdrs   = ["#", "Player", "Team", "Opp", "Conf",
               "Proj Hits", "Proj HR", "Proj TB", "Proj RBI", "Proj Runs", "Season"]
@@ -272,15 +236,16 @@ def render_mlb(date_str: str):
         name  = row.get("player_name", "")
         team  = row.get("team", "")
         opp   = row.get("opponent", "")
-        conf  = str(row.get("confidence", "Low"))
+        # Show confidence for the active sort category
+        conf  = str(row.get(active_conf_col, row.get("confidence", "Low")))
         gp    = int(row.get("gp", 0))
         savg  = float(row.get("season_avg", 0))
         shr   = int(row.get("season_hr", 0))
-        ph    = float(row.get("proj_hits", 0))
-        phr   = float(row.get("proj_hr", 0))
-        ptb   = float(row.get("proj_tb", 0))
-        prbi  = float(row.get("proj_rbi", 0))
-        pruns = float(row.get("proj_runs", 0))
+        ph    = float(row.get("proj_hits",  0))
+        phr   = float(row.get("proj_hr",    0))
+        ptb   = float(row.get("proj_tb",    0))
+        prbi  = float(row.get("proj_rbi",   0))
+        pruns = float(row.get("proj_runs",  0))
 
         row_bg = "#0f1320" if rank % 2 == 0 else "#111827"
         rc2    = "#e74c3c" if rank <= 3 else "#8892a4"
@@ -313,8 +278,9 @@ def render_mlb(date_str: str):
     st.divider()
 
     # ── Charts ────────────────────────────────────────────────────────────────
-    t1, t2 = st.tabs(["📊 Charts", "🔬 Feature Importance"])
-    with t1:
+    tab1, tab2 = st.tabs(["📊 Charts", "🔬 Feature Importance"])
+
+    with tab1:
         cdf = disp.head(20)
         if not cdf.empty:
             c1, c2 = st.columns(2)
@@ -329,8 +295,7 @@ def render_mlb(date_str: str):
                     title="Projected Hits", xaxis_tickangle=-40,
                     plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                     font=dict(color="#e8ecf4"),
-                    xaxis=dict(gridcolor="#1e2535"),
-                    yaxis=dict(gridcolor="#1e2535"),
+                    xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                     height=370, margin=dict(t=45, b=110),
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -345,13 +310,12 @@ def render_mlb(date_str: str):
                     title="HR Probability", xaxis_tickangle=-40,
                     plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                     font=dict(color="#e8ecf4"),
-                    xaxis=dict(gridcolor="#1e2535"),
-                    yaxis=dict(gridcolor="#1e2535"),
+                    xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                     height=370, margin=dict(t=45, b=110),
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 
-    with t2:
+    with tab2:
         if pipeline:
             m = pipeline.models.get("hits")
             if m and hasattr(m, "feature_importances_"):
@@ -367,8 +331,7 @@ def render_mlb(date_str: str):
                     title="Top 20 Feature Importances (Hits model)",
                     plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                     font=dict(color="#e8ecf4"),
-                    xaxis=dict(gridcolor="#1e2535"),
-                    yaxis=dict(gridcolor="#1e2535"),
+                    xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                     height=500, margin=dict(l=160, t=45),
                 )
                 st.plotly_chart(fig3, use_container_width=True)

@@ -16,6 +16,16 @@ from nba_pipeline import NBAPipeline
 
 ET = ZoneInfo("America/New_York")
 
+# Maps sort column → per-category confidence column
+SORT_TO_CONF = {
+    "proj_pts":    "conf_pts",
+    "proj_reb":    "conf_reb",
+    "proj_ast":    "conf_ast",
+    "proj_fg3m":   "conf_fg3m",
+    "proj_stocks": "conf_stocks",
+    "proj_dd":     "conf_dd",
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -26,7 +36,6 @@ def badge(conf):
 
 
 def bar(val, max_val, colour, fmt=".1f"):
-<<<<<<< HEAD
     pct = min(val / max_val * 100, 100) if max_val > 0 else 0
     return (
         f'<div style="display:flex;align-items:center;gap:5px;">'
@@ -41,14 +50,13 @@ def bar(val, max_val, colour, fmt=".1f"):
 # ── Session state init ────────────────────────────────────────────────────────
 
 def _init_state():
-    defaults = {
+    for k, v in {
         "nba_preds":    pd.DataFrame(),
         "nba_pipeline": None,
         "nba_last_run": None,
         "_nba_mtime":   None,
         "_nba_date":    None,
-    }
-    for k, v in defaults.items():
+    }.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
@@ -62,82 +70,19 @@ def render_nba(date_str: str):
     is_today  = (date_str is None or date_str == today_str)
     selected  = date_str or today_str
 
-    # ── Auto-load predictions ─────────────────────────────────────────────────
+    # ── Auto-load ─────────────────────────────────────────────────────────────
     hist_file = (
         Path("data/cache/predictions/history") / f"nba_{selected}.parquet"
         if not is_today else None
     )
-
     disk_mtime    = predictions_mtime("nba")
     session_mtime = st.session_state.get("_nba_mtime")
     session_date  = st.session_state.get("_nba_date")
 
-    need_reload = (
-        st.session_state.nba_preds.empty
-        or session_date != selected
-        or (is_today and disk_mtime and disk_mtime != session_mtime)
-    )
-
-    if need_reload:
+    if (st.session_state.nba_preds.empty
+            or session_date != selected
+            or (is_today and disk_mtime and disk_mtime != session_mtime)):
         if not is_today and hist_file and hist_file.exists():
-=======
-    pct = min(val/max_val*100,100) if max_val>0 else 0
-    return (f'<div style="display:flex;align-items:center;gap:5px;">'
-            f'<div style="flex:1;background:#1e2535;border-radius:5px;height:10px;overflow:hidden;">'
-            f'<div style="width:{pct:.0f}%;height:100%;background:{colour};border-radius:5px;"></div></div>'
-            f'<span style="font-weight:700;color:#e8ecf4;min-width:34px;font-size:.88rem;">{val:{fmt}}</span></div>')
-
-def render_nba(selected_date: str):
-    for k,v in {"nba_pipeline":None,"nba_preds":pd.DataFrame(),
-                "nba_running":False,"nba_last_run":None,
-                "nba_games":[],"nba_teams":[]}.items():
-        if k not in st.session_state: st.session_state[k]=v
-
-
-    from app.prediction_store import load_predictions, last_updated, predictions_mtime
-    from pathlib import Path as _Path
-
-    # ── Load from pre-computed predictions (instant) ──────────────────────────
-    # If admin selected a past date, load from history parquet
-    _selected = date_str  # passed in from main.py
-    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
-    _is_today = (_selected is None or _selected == _today)
-    _hist_file = _Path("data/cache/predictions/history") / f"nba_{_selected}.parquet" if _selected and not _is_today else None
-
-    _disk_mtime   = predictions_mtime("nba")
-    _session_mtime = st.session_state.get("_nba_mtime")
-    _session_date  = st.session_state.get("_nba_date")
-    if st.session_state.nba_preds.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
-        # Load from history for past dates, today's parquet for today
-        _hist = Path("data/cache/predictions/history") / f"nba_{date_str}.parquet" \
-                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
-        if _hist and _hist.exists():
-            import pandas as _pd
-            stored = dict(load_predictions("nba"))
-            stored["predictions"] = _pd.read_parquet(_hist)
-        else:
-            stored = load_predictions("nba")
-        if not stored["predictions"].empty:
-            st.session_state.nba_preds      = stored["predictions"]
-            st.session_state.nba_games      = stored["games"]
-            st.session_state.nba_teams      = sorted(
-                stored["predictions"]["team"].dropna().unique().tolist()
-            ) if "team" in stored["predictions"].columns else []
-            st.session_state._nba_game_proj = stored["game_projections"]
-            st.session_state.nba_last_run   = last_updated("nba") or "pre-computed"
-            st.session_state._nba_mtime        = _disk_mtime
-
-    # ── Admin: refresh button ─────────────────────────────────────────────────
-    if is_admin() and st.button("🏀 Refresh NBA Predictions", type="primary",
-                  use_container_width=True, key="nba_load"):
-        st.session_state.nba_running = True
-
-    if st.session_state.nba_running:
-        st.session_state.nba_running = False
-        pb=st.progress(0.0); stxt=st.empty()
-        def upd(msg,f): pb.progress(min(f,1.0)); stxt.markdown(f"⚙️ **{msg}**")
-        with st.spinner("Running NBA pipeline …"):
->>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
             try:
                 st.session_state.nba_preds      = pd.read_parquet(hist_file)
                 st.session_state["_nba_date"]   = selected
@@ -162,9 +107,8 @@ def render_nba(selected_date: str):
     lu = last_updated("nba")
     col_h, col_meta = st.columns([3, 1])
     with col_h:
-        date_label = "Today" if is_today else selected
         st.markdown(
-            f'<div class="section-header">🏀 NBA — {date_label}</div>',
+            f'<div class="section-header">🏀 NBA — {"Today" if is_today else selected}</div>',
             unsafe_allow_html=True,
         )
     with col_meta:
@@ -173,7 +117,7 @@ def render_nba(selected_date: str):
         if not is_today and (hist_file is None or not hist_file.exists()):
             st.caption("No history available for this date.")
 
-    # ── Admin: run pipeline ───────────────────────────────────────────────────
+    # ── Admin pipeline ────────────────────────────────────────────────────────
     if is_admin() and is_today:
         with st.expander("⚙️ Admin — Run Pipeline", expanded=False):
             if st.button("▶ Run NBA Pipeline", key="nba_run_btn"):
@@ -193,19 +137,19 @@ def render_nba(selected_date: str):
                     except Exception as exc:
                         st.error(f"Pipeline error: {exc}")
 
-    # ── No data state ─────────────────────────────────────────────────────────
+    # ── No data ───────────────────────────────────────────────────────────────
     if preds.empty:
         if is_today:
             st.info("No NBA predictions loaded yet. "
-                    + ("Run the pipeline above." if is_admin() else
-                       "Predictions are generated automatically each morning."))
+                    + ("Run the pipeline above." if is_admin()
+                       else "Predictions are generated automatically each morning."))
         else:
             st.info(f"No saved predictions found for {selected}.")
         return
 
-    # ── Filters ───────────────────────────────────────────────────────────────
-    teams_in_preds = sorted(preds["team"].dropna().unique().tolist()) if "team" in preds.columns else []
-    games_in_preds = sorted(preds["game_label"].dropna().unique().tolist()) if "game_label" in preds.columns else []
+    # ── Build filter option lists ─────────────────────────────────────────────
+    teams       = sorted(preds["team"].dropna().unique().tolist()) if "team" in preds.columns else []
+    game_labels = sorted(preds["game_label"].dropna().unique().tolist()) if "game_label" in preds.columns else []
 
     sort_map = {
         "Proj Pts":    "proj_pts",
@@ -215,39 +159,59 @@ def render_nba(selected_date: str):
         "Proj Stocks": "proj_stocks",
     }
 
-    fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 1.5, 1.8, 1])
-    with fc1:
-        team_opts = ["All"] + [f"{t} — {NBA_TEAM_NAMES.get(t, t)}" for t in teams_in_preds]
-        sel_team_raw = st.selectbox("Team", team_opts, key="nba_team_filter")
-        sel_team = None if sel_team_raw == "All" else sel_team_raw.split(" — ")[0]
-    with fc2:
-        sel_game = st.selectbox("Game", ["All"] + games_in_preds, key="nba_game_filter")
-    with fc3:
-        sel_conf = st.selectbox("Confidence", ["All", "Elite", "High", "Medium", "Low"],
-                                key="nba_conf_filter")
-    with fc4:
-        sel_sort = st.selectbox("Sort by", list(sort_map.keys()), key="nba_sort")
-        sort_col = sort_map[sel_sort]
-    with fc5:
-        top_n = st.number_input("Show", 5, 200, 25, 5, key="nba_topn")
+    # ── Filter row ────────────────────────────────────────────────────────────
+    f1, f2, f3, f4, f5 = st.columns([2, 2, 1.5, 1.8, 1])
 
-    disp = preds.copy()
-    if sel_team:
-        disp = disp[disp["team"] == sel_team]
-    if sel_game != "All":
-        disp = disp[disp["game_label"] == sel_game]
-    if sel_conf != "All":
-        conf_order = {"Elite": 4, "High": 3, "Medium": 2, "Low": 1}
-        min_rank   = conf_order.get(sel_conf, 1)
-        disp = disp[disp["confidence"].map(lambda c: conf_order.get(str(c), 0)) >= min_rank]
-    if sort_col in disp.columns:
-        disp = disp.sort_values(sort_col, ascending=False)
-    disp = disp.head(int(top_n))
+    with f1:
+        st.markdown('<div class="filter-label">Team</div>', unsafe_allow_html=True)
+        team_opts = ["🏀 All Teams"] + [f"{t} — {NBA_TEAM_NAMES.get(t, t)}" for t in teams]
+        sl = st.selectbox("Team", team_opts, index=0,
+                          label_visibility="collapsed", key="nba_team")
+        ft = None if sl == "🏀 All Teams" else sl.split(" — ")[0]
 
-    st.caption(f"Showing {len(disp)} players · sorted by {sel_sort}")
+    with f2:
+        st.markdown('<div class="filter-label">Game</div>', unsafe_allow_html=True)
+        game_opts = ["🏀 All Games"] + game_labels
+        sg = st.selectbox("Game", game_opts, index=0,
+                          label_visibility="collapsed", key="nba_game")
+        fg = None if sg == "🏀 All Games" else sg
+
+    with f3:
+        st.markdown('<div class="filter-label">Sort By</div>', unsafe_allow_html=True)
+        ss = st.selectbox("Sort", list(sort_map.keys()), index=0,
+                          label_visibility="collapsed", key="nba_sort")
+        sc = sort_map[ss]
+
+    with f4:
+        st.markdown('<div class="filter-label">Confidence</div>', unsafe_allow_html=True)
+        sconf = st.selectbox("Conf", ["All", "Elite", "High", "Medium", "Low"],
+                             index=0, label_visibility="collapsed", key="nba_conf")
+
+    with f5:
+        st.markdown('<div class="filter-label">Show</div>', unsafe_allow_html=True)
+        top_n = st.number_input("N", 5, 200, 25, 5,
+                                label_visibility="collapsed", key="nba_n")
+
+    # Active confidence column for current sort
+    active_conf_col = SORT_TO_CONF.get(sc, "confidence")
+
+    # ── Apply filters ─────────────────────────────────────────────────────────
+    filt = preds.copy()
+    if ft:
+        filt = filt[filt["team"] == ft]
+    if fg:
+        filt = filt[filt["game_label"] == fg]
+    if sconf != "All":
+        conf_col_to_filter = active_conf_col if active_conf_col in filt.columns else "confidence"
+        filt = filt[filt[conf_col_to_filter].astype(str) == sconf]
+    if sc in filt.columns:
+        filt = filt.sort_values(sc, ascending=False)
+    disp = filt.head(int(top_n))
+
+    st.caption(f"Showing {len(disp)} of {len(filt)} players · sorted by {ss}")
 
     if disp.empty:
-        st.warning("No players match the selected filters.")
+        st.info("No players match filters.")
         return
 
     # ── Player table ──────────────────────────────────────────────────────────
@@ -266,18 +230,19 @@ def render_nba(selected_date: str):
     )
 
     for rank, (_, row) in enumerate(disp.iterrows(), 1):
-        name  = row.get("player_name", "")
-        team  = row.get("team", "")
-        opp   = row.get("opponent", "")
-        conf  = str(row.get("confidence", "Low"))
-        gp    = int(row.get("gp", 0))
-        spts  = float(row.get("season_pts", 0))
-        sreb  = float(row.get("season_reb", 0))
-        sast  = float(row.get("season_ast", 0))
-        pp    = float(row.get("proj_pts",   0))
-        pr    = float(row.get("proj_reb",   0))
-        pa    = float(row.get("proj_ast",   0))
-        p3    = float(row.get("proj_fg3m",  0))
+        name = row.get("player_name", "")
+        team = row.get("team", "")
+        opp  = row.get("opponent", "")
+        # Show confidence for the active sort category
+        conf = str(row.get(active_conf_col, row.get("confidence", "Low")))
+        gp   = int(row.get("gp", 0))
+        spts = float(row.get("season_pts", 0))
+        sreb = float(row.get("season_reb", 0))
+        sast = float(row.get("season_ast", 0))
+        pp   = float(row.get("proj_pts",   0))
+        pr   = float(row.get("proj_reb",   0))
+        pa   = float(row.get("proj_ast",   0))
+        p3   = float(row.get("proj_fg3m",  0))
 
         row_bg = "#0f1320" if rank % 2 == 0 else "#111827"
         rc2    = "#e74c3c" if rank <= 3 else "#8892a4"
@@ -326,8 +291,7 @@ def render_nba(selected_date: str):
                     title="Projected Points", xaxis_tickangle=-40,
                     plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                     font=dict(color="#e8ecf4"),
-                    xaxis=dict(gridcolor="#1e2535"),
-                    yaxis=dict(gridcolor="#1e2535"),
+                    xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                     height=370, margin=dict(t=45, b=110),
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -342,8 +306,7 @@ def render_nba(selected_date: str):
                     title="Projected Rebounds", xaxis_tickangle=-40,
                     plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                     font=dict(color="#e8ecf4"),
-                    xaxis=dict(gridcolor="#1e2535"),
-                    yaxis=dict(gridcolor="#1e2535"),
+                    xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                     height=370, margin=dict(t=45, b=110),
                 )
                 st.plotly_chart(fig2, use_container_width=True)
@@ -365,8 +328,7 @@ def render_nba(selected_date: str):
                         title="Points Model — Feature Importance",
                         plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
                         font=dict(color="#e8ecf4"),
-                        xaxis=dict(gridcolor="#1e2535"),
-                        yaxis=dict(gridcolor="#1e2535"),
+                        xaxis=dict(gridcolor="#1e2535"), yaxis=dict(gridcolor="#1e2535"),
                         height=450, margin=dict(l=180, t=45),
                     )
                     st.plotly_chart(fig3, use_container_width=True)

@@ -1,0 +1,26 @@
+{
+  "nhl": {
+    "aggregate": {},
+    "message": "",
+    "error": "",
+    "updated_at": "2026-05-07T23:34:43.056905-04:00",
+    "days": 3,
+    "n_rows": 0
+  },
+  "mlb": {
+    "aggregate": {},
+    "message": "",
+    "error": "",
+    "updated_at": "2026-05-07T23:34:43.074603-04:00",
+    "days": 3,
+    "n_rows": 0
+  },
+  "nba": {
+    "aggregate": {},
+    "message": "",
+    "error": "",
+    "updated_at": "2026-05-07T23:34:43.160578-04:00",
+    "days": 3,
+    "n_rows": 0
+  }
+}

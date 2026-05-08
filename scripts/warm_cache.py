@@ -58,40 +58,36 @@ def save_predictions(sport: str, pipe, date: str):
             if not hist_file.exists():
                 preds.to_parquet(hist_file, index=False)
 
-            # Also save game projections to history so backtest can match them
-            game_proj = getattr(pipe, "game_proj", [])
-            if game_proj:
-                hist_proj = HIST_DIR / f"{sport}_games_{date}.json"
-                if not hist_proj.exists():
-                    import json
-                    hist_proj.write_text(json.dumps(game_proj, default=str))
-
             log(f"  Saved {len(preds)} {sport.upper()} predictions")
 
-        # Also save game projections to history for backtest
-        game_proj = getattr(pipe, "game_projections",
-                    getattr(pipe, "game_proj", []))
+        # Game projections — attribute name differs per pipeline
+        game_proj = (getattr(pipe, "game_projections", None) or
+                     getattr(pipe, "game_proj",         None) or [])
+
+        # Always overwrite the main game_projections.json (fresh each run)
         if game_proj:
-            gp_file = HIST_DIR / f"{sport}_games_{date}.json"
-            if not gp_file.exists():
-                import json as _json
-                gp_file.write_text(_json.dumps(game_proj))
+            with open(PRED_DIR / f"{sport}_game_projections.json", "w") as f:
+                json.dump(game_proj, f, default=str)
+            log(f"  Saved {len(game_proj)} game projections")
+
+            # History snapshot (one per date)
+            hist_proj = HIST_DIR / f"{sport}_games_{date}.json"
+            if not hist_proj.exists():
+                hist_proj.write_text(json.dumps(game_proj, default=str))
+        else:
+            log(f"  No game projections found (attr: game_proj/game_projections)")
+
+        # Today's schedule (for the tab game cards)
+        games = (getattr(pipe, "todays_games", None) or
+                 getattr(pipe, "games",         None) or [])
+        if games:
+            with open(PRED_DIR / f"{sport}_games.json", "w") as f:
+                json.dump(games, f, default=str)
 
         pitcher_preds = getattr(pipe, "pitcher_predictions", pd.DataFrame())
         if not pitcher_preds.empty:
             pitcher_preds.to_parquet(
                 PRED_DIR / f"{sport}_pitcher_predictions.parquet", index=False)
-
-        game_proj = getattr(pipe, "game_projections",
-                    getattr(pipe, "game_proj", []))
-        if game_proj:
-            with open(PRED_DIR / f"{sport}_game_projections.json", "w") as f:
-                json.dump(game_proj, f)
-
-        games = getattr(pipe, "todays_games", getattr(pipe, "games", []))
-        if games:
-            with open(PRED_DIR / f"{sport}_games.json", "w") as f:
-                json.dump(games, f)
 
         metrics = getattr(pipe, "model_metrics", getattr(pipe, "metrics", {}))
         if metrics:

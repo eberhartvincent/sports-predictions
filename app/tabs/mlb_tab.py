@@ -117,7 +117,42 @@ def render_mlb(selected_date: str, force_retrain: bool):
                 st.error(f"MLB Pipeline error: {e}"); st.exception(e)
         pb.empty(); stxt.empty(); st.rerun()
 
-    preds    = st.session_state.mlb_preds
+    # Recalculate per-category confidence columns if not in parquet
+    # (parquets saved before this feature was added won't have them)
+    if "conf_hr" not in preds.columns and "proj_hr" in preds.columns:
+        preds = preds.copy()
+        def _conf_hr(v):
+            if v >= 0.40: return "Elite"
+            if v >= 0.25: return "High"
+            if v >= 0.12: return "Medium"
+            return "Low"
+        def _conf_rbi(v):
+            if v >= 1.20: return "Elite"
+            if v >= 0.80: return "High"
+            if v >= 0.50: return "Medium"
+            return "Low"
+        def _conf_runs(v):
+            if v >= 1.10: return "Elite"
+            if v >= 0.75: return "High"
+            if v >= 0.50: return "Medium"
+            return "Low"
+        def _conf_hrr(v):
+            if v >= 2.80: return "Elite"
+            if v >= 2.00: return "High"
+            if v >= 1.40: return "Medium"
+            return "Low"
+        def _conf_tb(v):
+            if v >= 3.0: return "Elite"
+            if v >= 2.0: return "High"
+            if v >= 1.2: return "Medium"
+            return "Low"
+        preds["conf_hr"]   = preds["proj_hr"].apply(_conf_hr)
+        preds["conf_rbi"]  = preds["proj_rbi"].apply(_conf_rbi) if "proj_rbi" in preds.columns else "Low"
+        preds["conf_runs"] = preds["proj_runs"].apply(_conf_runs) if "proj_runs" in preds.columns else "Low"
+        preds["conf_hrr"]  = preds["proj_hrr"].apply(_conf_hrr) if "proj_hrr" in preds.columns else "Low"
+        preds["conf_hits"] = preds.get("confidence", "Low")
+        preds["conf_tb"]   = preds["proj_tb"].apply(_conf_tb) if "proj_tb" in preds.columns else "Low"
+        st.session_state.mlb_preds = preds
     p_preds  = st.session_state.mlb_pitcher_preds
     pipeline = st.session_state.mlb_pipeline
     games    = st.session_state.mlb_games

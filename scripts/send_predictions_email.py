@@ -109,7 +109,7 @@ def proj_cell(val, fmt=".2f", color="#1565c0") -> str:
 # ── NHL ───────────────────────────────────────────────────────────────────────
 
 def nhl_section(data: dict) -> str:
-    html = section("🏒", "NHL — Today's Top Picks", "Top 5 per category")
+    html = section("🏒", "NHL — Today's Top Picks", f"Top {TOP_CAT} per category")
     df = data["predictions"]
     if df.empty:
         return html + no_data("No NHL data available.")
@@ -138,8 +138,10 @@ def nhl_section(data: dict) -> str:
         h += '</table></div>'
         return h
 
-    html += _cat_table("🥅 Top 5 — Goal Scorers",    "goal_probability", "goal_probability", "Goal Prob", ".3f", "#c0392b")
-    html += _cat_table("🏒 Top 5 — Shots on Goal",   "projected_sog",    "projected_sog",    "Proj SOG",  ".1f", "#2980b9")
+    html += _cat_table(f"🥅 Top {TOP_CAT} — Goal Scorers",    "goal_probability",  "goal_probability",  "Goal Prob", ".3f", "#c0392b")
+    html += _cat_table(f"🏒 Top {TOP_CAT} — Shots on Goal",   "projected_sog",     "projected_sog",     "Proj SOG",  ".1f", "#2980b9")
+    html += _cat_table(f"🍎 Top {TOP_CAT} — Assists",         "projected_assists",  "projected_assists", "Proj Ast",  ".2f", "#16a085")
+    html += _cat_table(f"⭐ Top {TOP_CAT} — Points",          "projected_points",   "projected_points",  "Proj Pts",  ".2f", "#8e44ad")
 
     if data.get("game_projections") and len(data["game_projections"]) > 0:
         html += _nhl_game_proj(data["game_projections"])
@@ -173,22 +175,36 @@ def _nhl_game_proj(projs: list) -> str:
 
 def _mlb_pitcher_table(preds: "pd.DataFrame") -> str:
     if preds.empty: return ""
-    html = ('<div style="margin-top:18px;">'
-            '<h3 style="font-size:13px;color:#495057;margin:0 0 8px;">'
-            '⚾ Starting Pitcher Projections</h3>'
-            '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">')
-    html += table_header("Pitcher","Team","Opp","Proj K","Proj IP","ERA","xERA")
-    for i,(_, r) in enumerate(preds.head(10).iterrows()):
-        html += row_start(i)
-        html += td(f'<strong>{r.get("player_name","")}</strong>')
-        html += td(r.get("team",""), color="#1565c0", bold=True)
-        html += td(r.get("opponent",""), color="#6c757d")
-        html += proj_cell(float(r.get("proj_k",0)), color="#8e44ad")
-        html += proj_cell(float(r.get("proj_ip",0)), color="#16a085")
-        html += td(f'{float(r.get("era",0)):.2f}', color="#6c757d")
-        html += td(f'{float(r.get("xera",r.get("era",0))):.2f}', color="#6c757d")
-        html += '</tr>'
-    html += '</table></div>'
+
+    def _ptable(title, rows):
+        h  = f'<div style="margin-bottom:16px;">'
+        h += f'<h3 style="font-size:13px;color:#495057;margin:0 0 6px;">{title}</h3>'
+        h += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
+        h += table_header("Pitcher","Team","Opp","Hand","Value","ERA","Proj IP")
+        for i,(_, r) in enumerate(rows.iterrows()):
+            name = r.get("pitcher_name", r.get("player_name",""))
+            h += row_start(i)
+            h += td(f'<strong>{name}</strong>')
+            h += td(r.get("team",""), color="#1565c0", bold=True)
+            h += td(r.get("opponent",""), color="#6c757d")
+            h += td(r.get("pitcher_hand",""), color="#6c757d")
+            yield_col = r.get("proj_k",0)
+            h += proj_cell(float(yield_col), color="#8e44ad")
+            h += td(f'{float(r.get("era",0)):.2f}', color="#6c757d")
+            h += proj_cell(float(r.get("proj_ip",0)), ".1f", color="#16a085")
+            h += '</tr>'
+        h += '</table></div>'
+        return h
+
+    html  = '<div style="margin-top:18px;">'
+    # Top K pitchers (sorted by proj strikeouts)
+    top_k   = preds.sort_values("proj_k",  ascending=False).head(TOP_CAT)
+    # Best ERA matchups (sorted by ERA ascending = easiest to hit against)
+    top_era = preds.sort_values("era",     ascending=True ).head(TOP_CAT)
+
+    html += _ptable(f"🔥 Top {TOP_CAT} Pitchers — Strikeouts", top_k)
+    html += _ptable(f"💥 Top {TOP_CAT} Pitchers — Best ERA (hitter matchup)", top_era)
+    html += '</div>'
     return html
 
 
@@ -241,7 +257,7 @@ def _nba_game_proj(projs: list) -> str:
 # ── MLB ───────────────────────────────────────────────────────────────────────
 
 def mlb_section(data: dict) -> str:
-    html = section("⚾", "MLB — Today's Top Picks", "Top 5 per category")
+    html = section("⚾", "MLB — Today's Top Picks", f"Top {TOP_CAT} per category")
     df = data["predictions"]
     if df.empty:
         return html + no_data("No MLB data available.")
@@ -271,12 +287,12 @@ def mlb_section(data: dict) -> str:
         h += '</table></div>'
         return h
 
-    html += _cat("🎯 Top 5 — H+R+RBI",    "proj_hrr",  "conf_hrr",  "Proj HRR",  ".2f", "#f59e0b")
-    html += _cat("🏆 Top 5 — Hits",        "proj_hits", "conf_hits", "Proj H",    ".3f", "#27ae60")
-    html += _cat("💣 Top 5 — Home Runs",   "proj_hr",   "conf_hr",   "HR Prob",   ".3f", "#c0392b")
-    html += _cat("🏃 Top 5 — RBI",         "proj_rbi",  "conf_rbi",  "Proj RBI",  ".2f", "#e67e22")
-    html += _cat("⚡ Top 5 — Runs Scored", "proj_runs", "conf_runs", "Proj R",    ".2f", "#16a085")
-    html += _cat("💥 Top 5 — Total Bases",  "proj_tb",   "conf_hrr",  "Proj TB",   ".2f", "#8e44ad")
+    html += _cat(f"🎯 Top {TOP_CAT} — H+R+RBI",    "proj_hrr",  "conf_hrr",  "Proj HRR",  ".2f", "#f59e0b")
+    html += _cat(f"🏆 Top {TOP_CAT} — Hits",        "proj_hits", "conf_hits", "Proj H",    ".3f", "#27ae60")
+    html += _cat(f"💣 Top {TOP_CAT} — Home Runs",   "proj_hr",   "conf_hr",   "HR Prob",   ".3f", "#c0392b")
+    html += _cat(f"🏃 Top {TOP_CAT} — RBI",         "proj_rbi",  "conf_rbi",  "Proj RBI",  ".2f", "#e67e22")
+    html += _cat(f"⚡ Top {TOP_CAT} — Runs Scored", "proj_runs", "conf_runs", "Proj R",    ".2f", "#16a085")
+    html += _cat(f"💥 Top {TOP_CAT} — Total Bases",  "proj_tb",   "conf_hrr",  "Proj TB",   ".2f", "#8e44ad")
 
     preds = data.get("pitcher_predictions", pd.DataFrame())
     if not preds.empty:
@@ -289,7 +305,7 @@ def mlb_section(data: dict) -> str:
 # ── NBA ───────────────────────────────────────────────────────────────────────
 
 def nba_section(data: dict) -> str:
-    html = section("🏀", "NBA — Today's Top Picks", "Top 5 per category")
+    html = section("🏀", "NBA — Today's Top Picks", f"Top {TOP_CAT} per category")
     df = data["predictions"]
     if df.empty:
         return html + no_data("No NBA data available.")
@@ -320,12 +336,12 @@ def nba_section(data: dict) -> str:
         h += '</table></div>'
         return h
 
-    html += _cat("🏀 Top 5 — Points",       "proj_pts",    "conf_pts",    "Proj Pts", ".1f", "#1565c0")
-    html += _cat("💪 Top 5 — Rebounds",     "proj_reb",    "conf_reb",    "Proj Reb", ".1f", "#16a085")
-    html += _cat("🎯 Top 5 — Assists",      "proj_ast",    "conf_ast",    "Proj Ast", ".1f", "#e67e22")
-    html += _cat("🔥 Top 5 — 3-Pointers",  "proj_fg3m",   "conf_fg3m",   "Proj 3PM", ".1f", "#8e44ad")
-    html += _cat("🛡 Top 5 — Stl+Blk",     "proj_stocks", "conf_stocks", "Proj Stk", ".1f", "#c0392b")
-    html += _cat("⭐ Top 5 — Double-Double","proj_dd",     "conf_dd",     "DD Prob",  ".0%", "#f59e0b")
+    html += _cat(f"🏀 Top {TOP_CAT} — Points",       "proj_pts",    "conf_pts",    "Proj Pts", ".1f", "#1565c0")
+    html += _cat(f"💪 Top {TOP_CAT} — Rebounds",     "proj_reb",    "conf_reb",    "Proj Reb", ".1f", "#16a085")
+    html += _cat(f"🎯 Top {TOP_CAT} — Assists",      "proj_ast",    "conf_ast",    "Proj Ast", ".1f", "#e67e22")
+    html += _cat(f"🔥 Top {TOP_CAT} — 3-Pointers",  "proj_fg3m",   "conf_fg3m",   "Proj 3PM", ".1f", "#8e44ad")
+    html += _cat(f"🛡 Top {TOP_CAT} — Stl+Blk",     "proj_stocks", "conf_stocks", "Proj Stk", ".1f", "#c0392b")
+    html += _cat(f"⭐ Top {TOP_CAT} — Double-Double","proj_dd",     "conf_dd",     "DD Prob",  ".0%", "#f59e0b")
 
     if data.get("game_projections") and len(data["game_projections"]) > 0:
         html += _nba_game_proj(data["game_projections"])

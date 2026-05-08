@@ -963,9 +963,9 @@ class MLBPipeline:
 
                     # HR confidence: based on HR probability vs league avg 0.107/game
                     row["conf_hr"] = (
-                        "Elite"  if hr  >= 0.28 else
-                        "High"   if hr  >= 0.18 else
-                        "Medium" if hr  >= 0.10 else "Low"
+                        "Elite"  if hr  >= 0.40 else
+                        "High"   if hr  >= 0.25 else
+                        "Medium" if hr  >= 0.12 else "Low"
                     )
                     # RBI confidence
                     row["conf_rbi"] = (

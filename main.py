@@ -140,9 +140,9 @@ else:
     ])
     tab_bt = None
 
-with tab_mlb: render_mlb(selected_date_str, force_retrain)
-with tab_nba: render_nba(selected_date_str, force_retrain)
-with tab_nhl: render_nhl(selected_date_str, force_retrain)
+with tab_mlb: render_mlb(selected_date_str)
+with tab_nba: render_nba(selected_date_str)
+with tab_nhl: render_nhl(selected_date_str)
 if tab_bt:
     with tab_bt:
         from app.pages.backtest_page import render_backtest

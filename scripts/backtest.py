@@ -220,7 +220,24 @@ def aggregate_mlb(rows: list) -> dict:
         out["hr_direction_accuracy"] = round(float(((hp>=0.08)==(hl==1)).mean()), 4)
         out["hr_brier"]              = round(brier(hp, hl), 4)
 
-    out["tiers"] = tier_stats(df, "pred_h", "actual_h")
+    # Per-tier breakdown with per-stat MAE
+    tiers = {}
+    for tier in ["Elite","High","Medium","Low"]:
+        sub = df[df["conf"]==tier]
+        if len(sub) < 5: continue
+        t = {"n": int(len(sub))}
+        for label, pc, ac in [
+            ("mae_h",   "pred_h",   "actual_h"),
+            ("mae_hrr", "pred_hrr", "actual_hrr"),
+            ("mae_hr",  "pred_hr",  "actual_hr"),
+        ]:
+            if pc in sub and ac in sub:
+                t[label]                      = round(float((sub[pc]-sub[ac]).abs().mean()),3)
+                t[f"bias_{label[4:]}"]        = round(float((sub[pc]-sub[ac]).mean()),3)
+                t[f"avg_pred_{label[4:]}"]    = round(float(sub[pc].mean()),3)
+                t[f"avg_actual_{label[4:]}"]  = round(float(sub[ac].mean()),3)
+        tiers[tier] = t
+    out["tiers"] = tiers
 
     cal = []
     for lo in [0, 0.25, 0.50, 0.75]:

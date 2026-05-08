@@ -341,16 +341,18 @@ def _render_mlb(mlb: dict):
 
     tiers = agg.get("tiers", {})
     if tiers:
-        st.markdown("**By confidence tier (hit predictions):**")
+        st.markdown("**By confidence tier:**")
         rows = []
         for t, v in tiers.items():
             rows.append({
-                "Tier":          t,
-                "Picks":         v["n"],
-                "Avg Hit Error": f"±{v.get('mae',0):.3f}",
-                "Bias":          f"{v.get('bias',0):+.3f}",
-                "Avg Pred Hits": f"{v.get('avg_predicted',0):.3f}",
-                "Avg Actual H":  f"{v.get('avg_actual',0):.3f}",
+                "Tier":              t,
+                "Picks":             v["n"],
+                "Avg Hit Error":     f"±{v.get('mae_h',   0):.3f}",
+                "Avg H+R+RBI Error": f"±{v.get('mae_hrr', 0):.3f}",
+                "Avg HR Error":      f"±{v.get('mae_hr',  0):.3f}",
+                "Pred Hits":         f"{v.get('avg_pred_h',   0):.3f}",
+                "Actual Hits":       f"{v.get('avg_actual_h', 0):.3f}",
+                "Hit Bias":          f"{'Over' if v.get('bias_h',0)>0.05 else 'Under' if v.get('bias_h',0)<-0.05 else 'On target'}",
             })
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 

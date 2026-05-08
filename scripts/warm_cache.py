@@ -57,7 +57,25 @@ def save_predictions(sport: str, pipe, date: str):
             hist_file = HIST_DIR / f"{sport}_{date}.parquet"
             if not hist_file.exists():
                 preds.to_parquet(hist_file, index=False)
+
+            # Also save game projections to history so backtest can match them
+            game_proj = getattr(pipe, "game_proj", [])
+            if game_proj:
+                hist_proj = HIST_DIR / f"{sport}_games_{date}.json"
+                if not hist_proj.exists():
+                    import json
+                    hist_proj.write_text(json.dumps(game_proj, default=str))
+
             log(f"  Saved {len(preds)} {sport.upper()} predictions")
+
+        # Also save game projections to history for backtest
+        game_proj = getattr(pipe, "game_projections",
+                    getattr(pipe, "game_proj", []))
+        if game_proj:
+            gp_file = HIST_DIR / f"{sport}_games_{date}.json"
+            if not gp_file.exists():
+                import json as _json
+                gp_file.write_text(_json.dumps(game_proj))
 
         pitcher_preds = getattr(pipe, "pitcher_predictions", pd.DataFrame())
         if not pitcher_preds.empty:

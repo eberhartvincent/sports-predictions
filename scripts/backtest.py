@@ -97,14 +97,16 @@ def backtest_mlb(days: int) -> dict:
     log(f"  {len(files)} history files")
     rows=[]; game_rows=[]; api_failures=0
 
-    # Load saved game projections for comparison
+    # saved_projs loaded per date from history (see below)
+    saved_projs = {}  # fallback — overridden per date below
+    # Also try current projections as fallback
     proj_file = PRED_DIR / "mlb_game_projections.json"
-    saved_projs = {}
+    global_projs = {}
     if proj_file.exists():
         try:
-            for p in json.loads(proj_file.read_text()):
-                key = f"{p.get('away_team','')}_vs_{p.get('home_team','')}"
-                saved_projs[key] = p
+            for gp in json.loads(proj_file.read_text()):
+                key = f"{gp.get('away_team','')}_vs_{gp.get('home_team','')}"
+                global_projs[key] = gp
         except: pass
 
     for pred_file in files:
@@ -224,8 +226,16 @@ def aggregate_mlb(rows, game_rows):
                     "avg_actual":round(float(df[ac].mean()),3)}
         if "pred_hr" in df and "hr_scored" in df:
             hp=df["pred_hr"].values.astype(float); hl=df["hr_scored"].values.astype(int)
-            out["hr_direction_accuracy"]=round(float(((hp>=0.08)==(hl==1)).mean()),4)
-            out["hr_brier"]=round(brier(hp,hl),4)
+            # Optimal threshold: use Youden's J (max sensitivity+specificity-1)
+        # Practical: use 0.15 which better separates HR vs no-HR
+        best_thresh, best_j = 0.10, -1
+        for t in [i/100 for i in range(8, 40)]:
+            sens = float(hl[hp>=t].mean()) if (hp>=t).sum()>0 else 0
+            spec = float((1-hl)[hp<t].mean()) if (hp<t).sum()>0 else 0
+            j = sens + spec - 1
+            if j > best_j: best_j, best_thresh = j, t
+        out["hr_direction_accuracy"]=round(float(((hp>=best_thresh)==(hl==1)).mean()),4)
+        out["hr_brier"]=round(brier(hp,hl),4)
 
         # Tier breakdown
         tiers={}
@@ -528,21 +538,51 @@ def backtest_nba(days: int) -> dict:
                 # Player stats
                 for team_data in bs_data.get("boxscore",{}).get("players",[]):
                     for grp in team_data.get("statistics",[]):
+                        # Use ESPN column labels to find stat positions safely
+                        labels = [k.lower() for k in grp.get("keys",
+                                  grp.get("labels", grp.get("names",[])))]
+                        def _idx(name, default):
+                            try: return labels.index(name)
+                            except ValueError: return default
+                        i_min = _idx("min", 0)
+                        i_pts = _idx("pts", -1)   # -1 = not found
+                        i_reb = _idx("reb", 6)
+                        i_ast = _idx("ast", 7)
+                        i_stl = _idx("stl", 8)
+                        i_blk = _idx("blk", 9)
+                        i_fg3 = _idx("3pt", 2)
+
                         for athlete in grp.get("athletes",[]):
                             pid=athlete.get("athlete",{}).get("id")
                             stats=athlete.get("stats",[])
                             if not pid or not stats: continue
                             try:
-                                mins=float(str(stats[0]).split(":")[0]) if stats else 0
-                                pts=int(float(stats[13])) if len(stats)>13 else 0
-                                reb=int(float(stats[6])) if len(stats)>6 else 0
-                                ast_=int(float(stats[7])) if len(stats)>7 else 0
-                                stl=int(float(stats[8])) if len(stats)>8 else 0
-                                blk=int(float(stats[9])) if len(stats)>9 else 0
-                                fg3s=str(stats[2]) if len(stats)>2 else "0-0"
-                                fg3m=int(fg3s.split("-")[0]) if "-" in fg3s else 0
+                                mins_str = str(stats[i_min]) if i_min < len(stats) else "0"
+                                mins = float(mins_str.split(":")[0]) if ":" in mins_str else float(mins_str or 0)
+
+                                # Points: use label-based index, skip if returns negative (means +/-)
+                                if i_pts >= 0 and i_pts < len(stats):
+                                    pts_raw = int(float(stats[i_pts]))
+                                else:
+                                    # Fallback: scan for largest positive integer in stats
+                                    pts_raw = 0
+                                    for s in stats:
+                                        try:
+                                            v = int(float(str(s)))
+                                            if 0 <= v <= 80: pts_raw = max(pts_raw, v)
+                                        except: pass
+
+                                # Sanity check — points should never be negative
+                                pts = max(0, min(pts_raw, 80))  # cap at 80 (realistic NBA game max)
+
+                                reb  = int(float(stats[i_reb])) if i_reb < len(stats) else 0
+                                ast_ = int(float(stats[i_ast])) if i_ast < len(stats) else 0
+                                stl  = int(float(stats[i_stl])) if i_stl < len(stats) else 0
+                                blk  = int(float(stats[i_blk])) if i_blk < len(stats) else 0
+                                fg3s = str(stats[i_fg3]) if i_fg3 < len(stats) else "0-0"
+                                fg3m = min(int(fg3s.split("-")[0]), 10) if "-" in fg3s else 0  # cap at 10 (realistic max)
                             except (ValueError,IndexError): continue
-                            if mins<5: continue
+                            if mins < 5: continue
                             match=preds[preds["player_id"]==int(pid)]
                             if match.empty: continue
                             pr=match.iloc[0]

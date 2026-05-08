@@ -31,7 +31,7 @@ def render_nba(selected_date: str):
 
 
     from app.prediction_store import load_predictions, last_updated, predictions_mtime
-    from pathlib import Path as _Path, predictions_mtime
+    from pathlib import Path as _Path
 
     # ── Load from pre-computed predictions (instant) ──────────────────────────
     # If admin selected a past date, load from history parquet

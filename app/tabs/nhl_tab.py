@@ -86,7 +86,7 @@ def render_nhl(selected_date_str):
             st.session_state[k] = v
 
     from app.prediction_store import load_predictions, last_updated, predictions_mtime
-    from pathlib import Path as _Path, predictions_mtime
+    from pathlib import Path as _Path
 
     # ── Load from pre-computed predictions first (instant) ────────────────────
     # warm_cache.py saves predictions daily — just read the files.

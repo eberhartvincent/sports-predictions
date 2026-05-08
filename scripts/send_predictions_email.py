@@ -375,49 +375,46 @@ def _nba_game_proj(projs: list) -> str:
 
 def _apply_prob_ceiling(df):
     """
-    Physics-based ceiling: a player cannot score more goals than
-    their shot volume × regressed shooting% allows.
-    Prevents 0-goal/low-shot players projecting at 0.60+.
+    Vectorised physics-based probability ceiling.
+    Also writes conf_goals and conf_sog so the email shows category-specific confidence.
     """
-    if df.empty or "goal_probability" not in df.columns:
+    if df is None or df.empty or "goal_probability" not in df.columns:
         return df
     import numpy as np
-    LEAGUE_AVG_SH = 0.104; BEST_CASE = 0.130; K = 150
-    ceilings = []
-    for _, row in df.iterrows():
-        shots_pg     = float(row.get("season_shots_pg",
-                       row.get("rolling_5g_shots", 0)) or 0)
-        gp           = max(int(row.get("gp_season", row.get("gp", 1))), 1)
-        season_goals = int(row.get("season_goals", 0))
-        total_shots  = shots_pg * gp
-        raw_sh       = season_goals / max(total_shots, 1)
-        w            = total_shots / (total_shots + K)
-        reg_sh       = w * raw_sh + (1 - w) * LEAGUE_AVG_SH
 
-        # Scale multiplier with sample size — small samples get no benefit of doubt
-        # < 20 shots: no upside multiplier (0 goals in 6 games = no ceiling boost)
-        # 20-100 shots: partial multiplier
-        # 100+ shots: full 1.5x multiplier
-        sample_mult  = min(1.5, 1.0 + 0.5 * min(total_shots / 100, 1.0))
-        ceiling      = shots_pg * min(reg_sh * sample_mult, BEST_CASE)
+    K = 150; LEAGUE_SH = 0.104; BEST_CASE = 0.130
 
-        # Hard cap: 0-goal players with < 15 GP get a very low ceiling
-        # regardless of shot volume (noise in small samples)
-        if season_goals == 0 and gp < 15:
-            ceiling = min(ceiling, 0.08)
+    shots = df.get("season_shots_pg",  df.get("rolling_5g_shots",
+            pd.Series([0]*len(df), index=df.index))).fillna(0).values.astype(float)
+    gp    = df.get("gp_season", df.get("gp",
+            pd.Series([1]*len(df), index=df.index))).fillna(1).clip(lower=1).values.astype(float)
+    goals = df.get("season_goals",
+            pd.Series([0]*len(df), index=df.index)).fillna(0).values.astype(float)
 
-        ceilings.append(max(0.02, min(ceiling, 0.65)))
+    total  = shots * gp
+    raw_sh = np.where(total > 0, goals / total, 0.0)
+    w      = total / (total + K)
+    reg_sh = w * raw_sh + (1 - w) * LEAGUE_SH
+    mult   = np.minimum(1.5, 1.0 + 0.5 * np.minimum(total / 100.0, 1.0))
+    ceil   = shots * np.minimum(reg_sh * mult, BEST_CASE)
+    ceil   = np.where((goals == 0) & (gp < 15), np.minimum(ceil, 0.08), ceil)
+    ceil   = np.clip(ceil, 0.02, 0.65)
+
     raw   = df["goal_probability"].values.astype(float)
-    ceil  = np.array(ceilings)
-    final = 0.90 * np.minimum(raw, ceil) + 0.10 * np.minimum(raw, 0.65)
-    df    = df.copy()
-    df["goal_probability"] = np.round(final, 4)
-    def _conf(p):
-        if p >= 0.32: return "Elite"
-        if p >= 0.22: return "High"
-        if p >= 0.14: return "Medium"
-        return "Low"
-    df["confidence"] = df["goal_probability"].apply(_conf)
+    final = np.round(0.90 * np.minimum(raw, ceil) + 0.10 * np.minimum(raw, 0.65), 4)
+
+    df = df.copy()
+    df["goal_probability"] = final
+    conf = pd.cut(final,
+        bins  = [-np.inf, 0.14, 0.22, 0.32, np.inf],
+        labels= ["Low", "Medium", "High", "Elite"]).astype(str)
+    df["confidence"] = conf
+    df["conf_goals"] = conf
+    if "projected_sog" in df.columns:
+        df["conf_sog"] = pd.cut(
+            df["projected_sog"].fillna(0).values.astype(float),
+            bins  = [-np.inf, 2.0, 3.0, 4.0, np.inf],
+            labels= ["Low", "Medium", "High", "Elite"]).astype(str)
     return df.sort_values("goal_probability", ascending=False).reset_index(drop=True)
 
 

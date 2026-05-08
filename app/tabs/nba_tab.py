@@ -30,13 +30,29 @@ def render_nba(selected_date: str, force_retrain: bool):
         if k not in st.session_state: st.session_state[k]=v
 
 
-    from app.prediction_store import load_predictions, last_updated, predictions_mtime, predictions_mtime
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime
+    from pathlib import Path as _Path, predictions_mtime
 
     # ── Load from pre-computed predictions (instant) ──────────────────────────
+    # If admin selected a past date, load from history parquet
+    _selected = date_str  # passed in from main.py
+    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
+    _is_today = (_selected is None or _selected == _today)
+    _hist_file = _Path("data/cache/predictions/history") / f"nba_{_selected}.parquet" if _selected and not _is_today else None
+
     _disk_mtime   = predictions_mtime("nba")
     _session_mtime = st.session_state.get("_nba_mtime")
-    if st.session_state.nba_preds.empty or (_disk_mtime and _disk_mtime != _session_mtime):
-        stored = load_predictions("nba")
+    _session_date  = st.session_state.get("_nba_date")
+    if st.session_state.nba_preds.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
+        # Load from history for past dates, today's parquet for today
+        _hist = Path("data/cache/predictions/history") / f"nba_{date_str}.parquet" \
+                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
+        if _hist and _hist.exists():
+            import pandas as _pd
+            stored = dict(load_predictions("nba"))
+            stored["predictions"] = _pd.read_parquet(_hist)
+        else:
+            stored = load_predictions("nba")
         if not stored["predictions"].empty:
             st.session_state.nba_preds      = stored["predictions"]
             st.session_state.nba_games      = stored["games"]
@@ -193,6 +209,9 @@ def render_nba(selected_date: str, force_retrain: bool):
             "Proj 3PM":"proj_fg3m","Proj Stocks":"proj_stocks"}
         ss=st.selectbox("Sort",list(sm.keys()),index=0,label_visibility="collapsed",key="nba_sort")
         sc=sm[ss]
+        nba_conf_map={"proj_pts":"conf_pts","proj_reb":"conf_reb","proj_ast":"conf_ast",
+                      "proj_fg3m":"conf_fg3m","proj_stocks":"conf_stocks"}
+        active_conf_col=nba_conf_map.get(sc,"confidence")
     with f4:
         st.markdown('<div class="filter-label">Confidence</div>',unsafe_allow_html=True)
         sconf=st.selectbox("Conf",["All","Elite","High","Medium","Low"],index=0,label_visibility="collapsed",key="nba_conf")
@@ -203,10 +222,12 @@ def render_nba(selected_date: str, force_retrain: bool):
     filt=preds.copy()
     if ft: filt=filt[filt["team"]==ft]
     if fg: filt=filt[filt["game_label"]==fg]
-    if sconf!="All" and "confidence" in filt.columns: filt=filt[filt["confidence"]==sconf]
+    if sconf!="All":
+        cf=active_conf_col if active_conf_col in filt.columns else "confidence"
+        filt=filt[filt[cf]==sconf]
     if sc in filt.columns: filt=filt.sort_values(sc,ascending=False)
     disp=filt.head(int(top_n))
-    st.caption(f"Showing {len(disp)} of {len(filt)} players · sorted by {ss}")
+    st.caption(f"Showing {len(disp)} of {len(filt)} players · sorted by {ss} · confidence = {ss} tier")
 
     if disp.empty:
         st.info("No players match filters.")

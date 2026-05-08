@@ -110,7 +110,20 @@ class GoalscorerModel:
             if p >= 0.14: return "Medium"
             return "Low"
 
-        prediction_df["confidence"] = prediction_df["goal_probability"].apply(_conf)
+        prediction_df["confidence"]  = prediction_df["goal_probability"].apply(_conf)
+        prediction_df["conf_goals"]  = prediction_df["confidence"]  # alias
+
+        # SOG per-category confidence
+        def _conf_sog(s):
+            if s >= 4.0: return "Elite"
+            if s >= 3.0: return "High"
+            if s >= 2.0: return "Medium"
+            return "Low"
+        if "projected_sog" in prediction_df.columns:
+            prediction_df["conf_sog"] = prediction_df["projected_sog"].apply(_conf_sog)
+        else:
+            prediction_df["conf_sog"] = "Low"
+
         return prediction_df.sort_values("goal_probability", ascending=False).reset_index(drop=True)
 
     def feature_importance(self) -> pd.DataFrame:

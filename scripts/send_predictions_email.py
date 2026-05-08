@@ -25,6 +25,8 @@ PRED_DIR     = _ROOT / "data" / "cache" / "predictions"
 TODAY        = datetime.now(ET).strftime("%Y-%m-%d")
 TODAY_LONG   = datetime.now(ET).strftime("%A, %B %d, %Y")
 TODAY_SHORT  = datetime.now(ET).strftime("%b %d")
+TOP_N        = 10   # overall list
+TOP_CAT      = 5    # per-category lists
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -107,50 +109,40 @@ def proj_cell(val, fmt=".2f", color="#1565c0") -> str:
 # ── NHL ───────────────────────────────────────────────────────────────────────
 
 def nhl_section(data: dict) -> str:
-    html = section("🏒", "NHL — Elite Goal Scorer Picks",
-                   "Players projected goal probability ≥ 0.32")
+    html = section("🏒", "NHL — Today's Top Picks", "Top 5 per category")
     df = data["predictions"]
     if df.empty:
         return html + no_data("No NHL data available.")
 
-    elite = df.sort_values("goal_probability", ascending=False).head(TOP_N)
+    def _cat_table(title, sort_col, val_col, val_label, val_fmt=".3f", color="#c0392b"):
+        if sort_col not in df.columns: return ""
+        top = df.sort_values(sort_col, ascending=False).head(TOP_CAT)
+        h  = f'<div style="margin-bottom:16px;">'
+        h += f'<h3 style="font-size:13px;color:#495057;margin:0 0 6px;">{title}</h3>'
+        h += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
+        h += table_header("#","Player","Team","Opp",val_label,"Conf","Szn G/A")
+        for i,(_, r) in enumerate(top.iterrows(),1):
+            val  = float(r.get(sort_col, 0))
+            conf = str(r.get("conf_goals" if "goal" in sort_col else "conf_sog", r.get("confidence","Low")))
+            cc   = "#c0392b" if conf=="Elite" else "#e67e22" if conf=="High" else "#2980b9"
+            sg   = int(r.get("season_goals",0)); sa = int(r.get("season_assists",0))
+            h += row_start(i)
+            h += td(f'<span style="color:#6c757d;font-weight:700;">#{i}</span>')
+            h += td(f'<strong>{r.get("player_name","")}</strong>')
+            h += td(r.get("team",""), color="#1565c0", bold=True)
+            h += td(r.get("opponent",""), color="#6c757d")
+            h += td(f'<span style="color:{color};font-weight:800;">{val:{val_fmt}}</span>')
+            h += td(f'<span style="color:{cc};font-weight:700;">{conf}</span>')
+            h += td(f'{sg}G / {sa}A', color="#6c757d")
+            h += '</tr>'
+        h += '</table></div>'
+        return h
 
-    if elite.empty:
-        html += no_data("No NHL picks today.")
+    html += _cat_table("🥅 Top 5 — Goal Scorers",    "goal_probability", "goal_probability", "Goal Prob", ".3f", "#c0392b")
+    html += _cat_table("🏒 Top 5 — Shots on Goal",   "projected_sog",    "projected_sog",    "Proj SOG",  ".1f", "#2980b9")
 
-    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} picks today</p>'
-    html += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
-    html += table_header("#","Player","Team","Opp","Matchup",
-                         "Goal Prob","Proj Ast","Proj Pts","Proj SOG","Szn G/A")
-
-    for i, (_, r) in enumerate(elite.iterrows(), 1):
-        prob = float(r.get("goal_probability",0))
-        ast_ = float(r.get("projected_assists",0))
-        pts  = float(r.get("projected_points",0))
-        sog  = float(r.get("projected_sog",0))
-        sg   = int(r.get("season_goals",0))
-        sa   = int(r.get("season_assists",0))
-        pc   = "#c0392b" if prob>=0.40 else "#e67e22" if prob>=0.32 else "#2980b9"
-
-        html += row_start(i)
-        html += td(f'<span style="color:#6c757d;font-weight:700;">#{i}</span>')
-        html += td(f'<strong>{r.get("player_name","")}</strong>')
-        html += td(r.get("team",""),   color="#1565c0", bold=True)
-        html += td(r.get("opponent",""), color="#6c757d")
-        html += td(r.get("game_label",""), color="#6c757d")
-        html += td(f'<span style="color:{pc};font-weight:800;font-size:14px;">{prob:.3f}</span>')
-        html += proj_cell(ast_,  color="#16a085")
-        html += proj_cell(pts,   color="#8e44ad")
-        html += proj_cell(sog, ".1f", color="#2980b9")
-        html += td(f'{sg}G / {sa}A', color="#6c757d")
-        html += '</tr>'
-
-    html += '</table>'
-
-    # Game projections
     if data["game_projections"]:
         html += _nhl_game_proj(data["game_projections"])
-
     return html
 
 
@@ -180,175 +172,98 @@ def _nhl_game_proj(projs: list) -> str:
 
 
 # ── MLB ───────────────────────────────────────────────────────────────────────
+# ── MLB ───────────────────────────────────────────────────────────────────────
 
 def mlb_section(data: dict) -> str:
-    html = section("⚾", "MLB — Elite Batter Picks",
-                   "Players with projected hit probability ≥ 0.80")
+    html = section("⚾", "MLB — Today's Top Picks", "Top 5 per category")
     df = data["predictions"]
     if df.empty:
         return html + no_data("No MLB data available.")
 
-    elite = df.sort_values("proj_hrr", ascending=False).head(TOP_N) if "proj_hrr" in df.columns else df.head(TOP_N)
+    def _cat(title, sort_col, conf_col, val_label, val_fmt, color):
+        if sort_col not in df.columns: return ""
+        top = df.sort_values(sort_col, ascending=False).head(TOP_CAT)
+        h  = f'<div style="margin-bottom:16px;">'
+        h += f'<h3 style="font-size:13px;color:#495057;margin:0 0 6px;">{title}</h3>'
+        h += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
+        h += table_header("#","Player","Team","Opp",val_label,"Conf","BvP")
+        for i,(_, r) in enumerate(top.iterrows(),1):
+            val  = float(r.get(sort_col, 0))
+            conf = str(r.get(conf_col, r.get("confidence","Low")))
+            cc   = "#c0392b" if conf=="Elite" else "#e67e22" if conf=="High" else "#2980b9"
+            bvp  = int(r.get("bvp_ab",0)); bvp_hr = int(r.get("bvp_hr",0))
+            bvp_s= f"{bvp}AB {bvp_hr}HR" if bvp>=5 else "—"
+            h += row_start(i)
+            h += td(f'<span style="color:#6c757d;font-weight:700;">#{i}</span>')
+            h += td(f'<strong>{r.get("player_name","")}</strong>')
+            h += td(r.get("team",""), color="#1565c0", bold=True)
+            h += td(r.get("opponent",""), color="#6c757d")
+            h += td(f'<span style="color:{color};font-weight:800;">{val:{val_fmt}}</span>')
+            h += td(f'<span style="color:{cc};font-weight:700;">{conf}</span>')
+            h += td(bvp_s, color="#6c757d")
+            h += '</tr>'
+        h += '</table></div>'
+        return h
 
-    if elite.empty:
-        html += no_data("No MLB picks today.")
+    html += _cat("🎯 Top 5 — H+R+RBI",    "proj_hrr",  "conf_hrr",  "Proj HRR",  ".2f", "#f59e0b")
+    html += _cat("🏆 Top 5 — Hits",        "proj_hits", "conf_hits", "Proj H",    ".3f", "#27ae60")
+    html += _cat("💣 Top 5 — Home Runs",   "proj_hr",   "conf_hr",   "HR Prob",   ".3f", "#c0392b")
+    html += _cat("🏃 Top 5 — RBI",         "proj_rbi",  "conf_rbi",  "Proj RBI",  ".2f", "#e67e22")
+    html += _cat("⚡ Top 5 — Runs Scored", "proj_runs", "conf_runs", "Proj R",    ".2f", "#16a085")
+    html += _cat("🔥 Top 5 — Strikeouts",  "proj_k",    "conf_k",    "Proj K",    ".2f", "#6c757d")
 
-    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} picks today</p>'
-    html += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
-    html += table_header("#","Player","Team","Opp","H+R+RBI","Proj H",
-                         "Proj HR","Proj RBI","Proj R","Proj TB","Proj K","vs P")
-
-    for i, (_, r) in enumerate(elite.iterrows(), 1):
-        hrr  = float(r.get("proj_hrr",  0))
-        hits = float(r.get("proj_hits", 0))
-        hr   = float(r.get("proj_hr",   0))
-        rbi  = float(r.get("proj_rbi",  0))
-        runs = float(r.get("proj_runs", 0))
-        tb   = float(r.get("proj_tb",   0))
-        k    = float(r.get("proj_k",    0))
-        bvp  = int(r.get("bvp_ab", 0))
-        bvp_hr = int(r.get("bvp_hr", 0))
-        bvp_str = f"{bvp}AB {bvp_hr}HR" if bvp >= 5 else "—"
-        hrr_col = "#f59e0b" if hrr >= 2.5 else "#c0392b" if hrr >= 2.0 else "#212529"
-
-        html += row_start(i)
-        html += td(f'<span style="color:#6c757d;font-weight:700;">#{i}</span>')
-        html += td(f'<strong>{r.get("player_name","")}</strong>')
-        html += td(r.get("team",""),     color="#1565c0", bold=True)
-        html += td(r.get("opponent",""), color="#6c757d")
-        html += td(f'<span style="font-size:16px;font-weight:800;color:{hrr_col};">{hrr:.2f}</span>')
-        html += proj_cell(hits,  color="#27ae60")
-        html += proj_cell(hr, ".3f", color="#c0392b")
-        html += proj_cell(rbi,   color="#e67e22")
-        html += proj_cell(runs,  color="#16a085")
-        html += proj_cell(tb,    color="#8e44ad")
-        html += proj_cell(k,     color="#6c757d")
-        html += td(bvp_str, color="#6c757d")
-        html += '</tr>'
-
-    html += '</table>'
-
-    # Pitcher projections
     preds = data.get("pitcher_predictions", pd.DataFrame())
     if not preds.empty:
         html += _mlb_pitcher_table(preds)
-
-    # Game projections
     if data["game_projections"]:
         html += _mlb_game_proj(data["game_projections"])
-
-    return html
-
-
-def _mlb_pitcher_table(df: pd.DataFrame) -> str:
-    html = ('<div style="margin-top:18px;">'
-            '<h3 style="font-size:13px;color:#495057;margin:0 0 8px;">'
-            '⚾ Starting Pitchers</h3>'
-            '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">')
-    html += table_header("Pitcher","Team","Opp","ERA","WHIP","K/9",
-                         "Proj IP","Proj K","Proj ER","Quality")
-    for i, (_, r) in enumerate(df.iterrows(), 1):
-        era  = float(r.get("era", 4.50))
-        ec   = "#27ae60" if era<=3.50 else "#e67e22" if era<=4.50 else "#c0392b"
-        qual = str(r.get("quality","Average"))
-        qc   = {"Ace":"#c0392b","Above Avg":"#e67e22","Average":"#2980b9",
-                "Below Avg":"#6c757d","Avoid":"#7f8c8d"}.get(qual,"#6c757d")
-        html += row_start(i)
-        html += td(f'<strong>{r.get("pitcher_name","")}</strong> '
-                   f'{"🏠" if r.get("is_home") else "✈️"}')
-        html += td(r.get("team",""),     color="#1565c0", bold=True)
-        html += td(f'vs {r.get("opponent","")}', color="#6c757d")
-        html += td(f'<span style="color:{ec};font-weight:700;">{era:.2f}</span>')
-        html += td(f'{float(r.get("whip",1.30)):.2f}', color="#6c757d")
-        html += td(f'{float(r.get("k9",8.5)):.1f}',   color="#6c757d")
-        html += proj_cell(float(r.get("proj_ip",5.5)), ".1f", "#2980b9")
-        html += proj_cell(float(r.get("proj_k", 5.0)), ".1f", "#27ae60")
-        html += td(f'<span style="color:{ec};font-weight:700;">'
-                   f'{float(r.get("proj_er",2.5)):.2f}</span>')
-        html += td(badge(qual, qc))
-        html += '</tr>'
-    html += '</table></div>'
-    return html
-
-
-def _mlb_game_proj(projs: list) -> str:
-    html = ('<div style="margin-top:18px;">'
-            '<h3 style="font-size:13px;color:#495057;margin:0 0 8px;">'
-            '🎰 MLB Game Projections</h3>'
-            '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">')
-    html += table_header("Matchup","Away Win","Home Win","Total Proj R","Best Bet")
-    for i, p in enumerate(projs):
-        away = p.get("away_team",""); home = p.get("home_team","")
-        rec  = p.get("recommendation",""); line = p.get("best_ou_line","")
-        prob = float(p.get("best_ou_prob",0))
-        rc   = "#c0392b" if rec=="OVER" else "#2980b9"
-        html += row_start(i)
-        html += td(f'<strong>{away} @ {home}</strong>')
-        html += td(f'{p.get("away_ml_display","")} '
-                   f'<span style="color:#6c757d;">({float(p.get("away_win_prob",0)):.0%})</span>')
-        html += td(f'{p.get("home_ml_display","")} '
-                   f'<span style="color:#6c757d;">({float(p.get("home_win_prob",0)):.0%})</span>')
-        html += td(f'{float(p.get("total_proj_runs",0)):.1f} R')
-        html += td(f'<span style="color:{rc};font-weight:700;">'
-                   f'{rec} {line} ({prob:.0%})</span>')
-        html += '</tr>'
-    html += '</table></div>'
     return html
 
 
 # ── NBA ───────────────────────────────────────────────────────────────────────
 
 def nba_section(data: dict) -> str:
-    html = section("🏀", "NBA — Elite Player Picks",
-                   "Players projected 30+ points")
+    html = section("🏀", "NBA — Today's Top Picks", "Top 5 per category")
     df = data["predictions"]
     if df.empty:
         return html + no_data("No NBA data available.")
 
-    elite = df.sort_values("proj_pts", ascending=False).head(TOP_N) if "proj_pts" in df.columns else df.head(TOP_N)
+    def _cat(title, sort_col, conf_col, val_label, val_fmt, color):
+        if sort_col not in df.columns: return ""
+        top = df.sort_values(sort_col, ascending=False).head(TOP_CAT)
+        h  = f'<div style="margin-bottom:16px;">'
+        h += f'<h3 style="font-size:13px;color:#495057;margin:0 0 6px;">{title}</h3>'
+        h += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
+        h += table_header("#","Player","Team","Opp",val_label,"Conf","Szn Avg")
+        for i,(_, r) in enumerate(top.iterrows(),1):
+            val  = float(r.get(sort_col, 0))
+            conf = str(r.get(conf_col, r.get("confidence","Low")))
+            cc   = "#c0392b" if conf=="Elite" else "#e67e22" if conf=="High" else "#2980b9"
+            spts = float(r.get("season_pts",0))
+            sreb = float(r.get("season_reb",0))
+            sast = float(r.get("season_ast",0))
+            h += row_start(i)
+            h += td(f'<span style="color:#6c757d;font-weight:700;">#{i}</span>')
+            h += td(f'<strong>{r.get("player_name","")}</strong>')
+            h += td(r.get("team",""), color="#1565c0", bold=True)
+            h += td(r.get("opponent",""), color="#6c757d")
+            h += td(f'<span style="color:{color};font-weight:800;">{val:{val_fmt}}</span>')
+            h += td(f'<span style="color:{cc};font-weight:700;">{conf}</span>')
+            h += td(f'{spts:.0f}P/{sreb:.0f}R/{sast:.0f}A', color="#6c757d")
+            h += '</tr>'
+        h += '</table></div>'
+        return h
 
-    if elite.empty:
-        html += no_data("No NBA picks today.")
+    html += _cat("🏀 Top 5 — Points",       "proj_pts",    "conf_pts",    "Proj Pts", ".1f", "#1565c0")
+    html += _cat("💪 Top 5 — Rebounds",     "proj_reb",    "conf_reb",    "Proj Reb", ".1f", "#16a085")
+    html += _cat("🎯 Top 5 — Assists",      "proj_ast",    "conf_ast",    "Proj Ast", ".1f", "#e67e22")
+    html += _cat("🔥 Top 5 — 3-Pointers",  "proj_fg3m",   "conf_fg3m",   "Proj 3PM", ".1f", "#8e44ad")
+    html += _cat("🛡 Top 5 — Stl+Blk",     "proj_stocks", "conf_stocks", "Proj Stk", ".1f", "#c0392b")
+    html += _cat("⭐ Top 5 — Double-Double","proj_dd",     "conf_dd",     "DD Prob",  ".0%", "#f59e0b")
 
-    html += f'<p style="color:#6c757d;font-size:12px;margin:0 0 8px;">{len(elite)} picks today</p>'
-    html += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
-    html += table_header("#","Player","Team","Opp","Proj Pts","Proj Reb",
-                         "Proj Ast","Proj 3PM","Proj Stk","DD Prob","Szn Avg")
-
-    for i, (_, r) in enumerate(elite.iterrows(), 1):
-        pts    = float(r.get("proj_pts",    0))
-        reb    = float(r.get("proj_reb",    0))
-        ast_   = float(r.get("proj_ast",    0))
-        fg3    = float(r.get("proj_fg3m",   0))
-        stk    = float(r.get("proj_stocks", 0))
-        dd     = float(r.get("proj_dd",     0))
-        spts   = float(r.get("season_pts",  0))
-        sreb   = float(r.get("season_reb",  0))
-        sast   = float(r.get("season_ast",  0))
-
-        html += row_start(i)
-        html += td(f'<span style="color:#6c757d;font-weight:700;">#{i}</span>')
-        html += td(f'<strong>{r.get("player_name","")}</strong>')
-        html += td(r.get("team",""),     color="#1565c0", bold=True)
-        html += td(r.get("opponent",""), color="#6c757d")
-        html += td(f'<span style="font-size:16px;font-weight:800;color:#1565c0;">{pts:.1f}</span>')
-        html += proj_cell(reb,  color="#16a085")
-        html += proj_cell(ast_, color="#e67e22")
-        html += proj_cell(fg3, ".1f", color="#8e44ad")
-        html += proj_cell(stk, ".1f", color="#c0392b")
-        html += td(f'<span style="color:{"#27ae60" if dd>=0.4 else "#6c757d"};'
-                   f'font-weight:700;">{dd:.0%}</span>')
-        html += td(f'{spts:.0f}P / {sreb:.0f}R / {sast:.0f}A', color="#6c757d")
-        html += '</tr>'
-
-    html += '</table>'
-
-    # Game projections
     if data["game_projections"]:
         html += _nba_game_proj(data["game_projections"])
-
     return html
-
 
 def _nba_game_proj(projs: list) -> str:
     html = ('<div style="margin-top:18px;">'

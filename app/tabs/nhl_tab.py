@@ -85,16 +85,32 @@ def render_nhl(selected_date_str, force_retrain):
         if k not in st.session_state:
             st.session_state[k] = v
 
-    from app.prediction_store import load_predictions, last_updated, predictions_mtime, predictions_mtime
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime
+    from pathlib import Path as _Path, predictions_mtime
 
     # ── Load from pre-computed predictions first (instant) ────────────────────
     # warm_cache.py saves predictions daily — just read the files.
     # Admin can force a fresh run; viewers always see the saved output.
     # Reload if empty OR if session state has a different date than the saved file
+    # If admin selected a past date, load from history parquet
+    _selected = date_str  # passed in from main.py
+    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
+    _is_today = (_selected is None or _selected == _today)
+    _hist_file = _Path("data/cache/predictions/history") / f"nhl_{_selected}.parquet" if _selected and not _is_today else None
+
     _disk_mtime   = predictions_mtime("nhl")
     _session_mtime = st.session_state.get("_nhl_mtime")
-    if st.session_state.nhl_predictions.empty or (_disk_mtime and _disk_mtime != _session_mtime):
-        stored = load_predictions("nhl")
+    _session_date  = st.session_state.get("_nhl_date")
+    if st.session_state.nhl_predictions.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
+        # Load from history for past dates, today's parquet for today
+        _hist = Path("data/cache/predictions/history") / f"nhl_{date_str}.parquet" \
+                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
+        if _hist and _hist.exists():
+            import pandas as _pd
+            stored = dict(load_predictions("nhl"))
+            stored["predictions"] = _pd.read_parquet(_hist)
+        else:
+            stored = load_predictions("nhl")
         if not stored["predictions"].empty:
             st.session_state.nhl_predictions  = _apply_prob_ceiling(stored["predictions"])
             st.session_state.nhl_games        = stored["games"]
@@ -346,6 +362,14 @@ def render_nhl(selected_date_str, force_retrain):
         sel_sort  = st.selectbox("Sort", list(sort_opts.keys()), index=0,
                                  label_visibility="collapsed", key="nhl_f_sort")
         sort_col  = sort_opts[sel_sort]
+        # Map sort to per-category confidence column
+        nhl_conf_map = {
+            "goal_probability":   "conf_goals",
+            "projected_sog":      "conf_sog",
+            "projected_assists":  "confidence",
+            "projected_points":   "confidence",
+        }
+        active_conf_col = nhl_conf_map.get(sort_col, "confidence")
     with fc6:
         st.markdown('<div class="filter-label">Show</div>', unsafe_allow_html=True)
         top_n = st.number_input("Show", min_value=5, max_value=100, value=25,
@@ -359,8 +383,9 @@ def render_nhl(selected_date_str, force_retrain):
         filt = filt[~filt["position"].astype(str).str.upper().isin(["D","G"])]
     elif sel_pos=="Defence" and "position" in filt.columns:
         filt = filt[filt["position"].astype(str).str.upper()=="D"]
-    if flt_conf and "confidence" in filt.columns:
-        filt = filt[filt["confidence"].astype(str)==flt_conf]
+    if flt_conf:
+        cf = active_conf_col if active_conf_col in filt.columns else "confidence"
+        filt = filt[filt[cf].astype(str)==flt_conf]
     if sort_col in filt.columns:
         filt = filt.sort_values(sort_col, ascending=False)
     disp = filt.head(int(top_n))

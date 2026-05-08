@@ -51,13 +51,29 @@ def render_mlb(selected_date: str, force_retrain: bool):
             st.session_state[k] = v
 
 
-    from app.prediction_store import load_predictions, last_updated, predictions_mtime, predictions_mtime
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime
+    from pathlib import Path as _Path, predictions_mtime
 
     # ── Load from pre-computed predictions (instant) ──────────────────────────
+    # If admin selected a past date, load from history parquet
+    _selected = date_str  # passed in from main.py
+    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
+    _is_today = (_selected is None or _selected == _today)
+    _hist_file = _Path("data/cache/predictions/history") / f"mlb_{_selected}.parquet" if _selected and not _is_today else None
+
     _disk_mtime   = predictions_mtime("mlb")
     _session_mtime = st.session_state.get("_mlb_mtime")
-    if st.session_state.mlb_preds.empty or (_disk_mtime and _disk_mtime != _session_mtime):
-        stored = load_predictions("mlb")
+    _session_date  = st.session_state.get("_mlb_date")
+    if st.session_state.mlb_preds.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
+        # Load from history for past dates, today's parquet for today
+        _hist = Path("data/cache/predictions/history") / f"mlb_{date_str}.parquet" \
+                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
+        if _hist and _hist.exists():
+            import pandas as _pd
+            stored = dict(load_predictions("mlb"))
+            stored["predictions"] = _pd.read_parquet(_hist)
+        else:
+            stored = load_predictions("mlb")
         if not stored["predictions"].empty:
             st.session_state.mlb_preds         = stored["predictions"]
             st.session_state.mlb_pitcher_preds = stored["pitcher_predictions"]

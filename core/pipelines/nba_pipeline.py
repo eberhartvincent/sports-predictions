@@ -415,11 +415,44 @@ class NBAPipeline:
                                 float(model.predict(fdf)[0]), 2
                             ) if model.is_trained else 0.0
 
-                        pp = row.get("proj_pts", 0)
+                        pp  = row.get("proj_pts",    0)
+                        reb = row.get("proj_reb",    0)
+                        ast_= row.get("proj_ast",    0)
+                        fg3 = row.get("proj_fg3m",   0)
+                        stk = row.get("proj_stocks", 0)
+                        dd  = row.get("proj_dd",     0)
+
                         row["confidence"] = (
                             "Elite"  if pp >= NBA_CONF_ELITE  else
                             "High"   if pp >= NBA_CONF_HIGH   else
                             "Medium" if pp >= NBA_CONF_MEDIUM else "Low"
+                        )
+                        # Per-category tiers
+                        row["conf_pts"] = row["confidence"]
+                        row["conf_reb"] = (
+                            "Elite"  if reb >= 10.0 else
+                            "High"   if reb >=  7.0 else
+                            "Medium" if reb >=  4.5 else "Low"
+                        )
+                        row["conf_ast"] = (
+                            "Elite"  if ast_>=  8.0 else
+                            "High"   if ast_>=  5.5 else
+                            "Medium" if ast_>=  3.0 else "Low"
+                        )
+                        row["conf_fg3m"] = (
+                            "Elite"  if fg3 >= 3.5 else
+                            "High"   if fg3 >= 2.5 else
+                            "Medium" if fg3 >= 1.5 else "Low"
+                        )
+                        row["conf_stocks"] = (
+                            "Elite"  if stk >= 3.5 else
+                            "High"   if stk >= 2.5 else
+                            "Medium" if stk >= 1.5 else "Low"
+                        )
+                        row["conf_dd"] = (
+                            "Elite"  if dd  >= 0.60 else
+                            "High"   if dd  >= 0.35 else
+                            "Medium" if dd  >= 0.20 else "Low"
                         )
                         rows.append(row)
 

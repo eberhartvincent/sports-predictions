@@ -367,8 +367,8 @@ def render_nhl(selected_date_str, force_retrain):
         nhl_conf_map = {
             "goal_probability":   "conf_goals",
             "projected_sog":      "conf_sog",
-            "projected_assists":  "confidence",
-            "projected_points":   "confidence",
+            "projected_assists":  "conf_ast",
+            "projected_points":   "conf_pts",
         }
         active_conf_col = nhl_conf_map.get(sort_col, "confidence")
     with fc6:
@@ -422,7 +422,18 @@ def render_nhl(selected_date_str, force_retrain):
         team     = row.get("team","")
         opp      = row.get("opponent","")
         prob     = float(row.get("goal_probability",0))
-        conf     = str(row.get("confidence","Low"))
+        conf_val = row.get(active_conf_col, None)
+        if not conf_val or str(conf_val) in ("nan","None",""):
+            sv = float(row.get(sort_col, 0))
+            if active_conf_col == "conf_sog":
+                conf_val = "Elite" if sv>=4.0 else "High" if sv>=3.0 else "Medium" if sv>=2.0 else "Low"
+            elif active_conf_col == "conf_ast":
+                conf_val = "Elite" if sv>=0.32 else "High" if sv>=0.20 else "Medium" if sv>=0.10 else "Low"
+            elif active_conf_col == "conf_pts":
+                conf_val = "Elite" if sv>=0.50 else "High" if sv>=0.35 else "Medium" if sv>=0.20 else "Low"
+            else:
+                conf_val = "Elite" if sv>=0.32 else "High" if sv>=0.22 else "Medium" if sv>=0.14 else "Low"
+        conf = str(conf_val)
         gp       = int(row.get("gp_season",0))
         goals    = int(row.get("season_goals",0))
         assists  = int(row.get("season_assists",0))

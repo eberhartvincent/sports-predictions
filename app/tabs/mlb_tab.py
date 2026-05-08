@@ -299,7 +299,25 @@ def _render_batters(preds, games, pipeline):
         team    = row.get("team","")
         opp     = row.get("opponent","")
         # Show confidence for the active sort category, not just overall
-        conf    = str(row.get(active_conf_col, row.get("confidence","Low")))
+        conf_val = row.get(active_conf_col, None)
+        # If column missing or NaN, compute inline from the sort value
+        if not conf_val or str(conf_val) in ("nan", "None", ""):
+            sv = float(row.get(sc, 0))
+            if active_conf_col == "conf_hr":
+                conf_val = "Elite" if sv>=0.40 else "High" if sv>=0.25 else "Medium" if sv>=0.12 else "Low"
+            elif active_conf_col == "conf_hits":
+                conf_val = "Elite" if sv>=1.10 else "High" if sv>=0.85 else "Medium" if sv>=0.60 else "Low"
+            elif active_conf_col == "conf_hrr":
+                conf_val = "Elite" if sv>=2.80 else "High" if sv>=2.00 else "Medium" if sv>=1.40 else "Low"
+            elif active_conf_col == "conf_tb":
+                conf_val = "Elite" if sv>=3.00 else "High" if sv>=2.00 else "Medium" if sv>=1.20 else "Low"
+            elif active_conf_col == "conf_rbi":
+                conf_val = "Elite" if sv>=1.20 else "High" if sv>=0.80 else "Medium" if sv>=0.50 else "Low"
+            elif active_conf_col == "conf_runs":
+                conf_val = "Elite" if sv>=1.10 else "High" if sv>=0.75 else "Medium" if sv>=0.50 else "Low"
+            else:
+                conf_val = row.get("confidence", "Low")
+        conf = str(conf_val)
         gp      = int(row.get("gp",0))
         savg    = float(row.get("season_avg",0))
         shr     = int(row.get("season_hr",0))

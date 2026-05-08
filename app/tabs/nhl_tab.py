@@ -24,6 +24,7 @@ def confidence_badge(conf):
          "Medium": "badge-medium", "Low": "badge-low"}
     return f'<span class="{m.get(str(conf), "badge-low")}">{conf}</span>'
 
+<<<<<<< HEAD
 
 def make_bar(val, max_val, colour, fmt=".2f"):
     pct = min(val / max_val * 100, 100) if max_val > 0 else 0
@@ -79,6 +80,141 @@ def render_nhl(date_str: str):
 
     if need_reload:
         if not is_today and hist_file and hist_file.exists():
+=======
+def _badge(conf):
+    m = {"Elite":"badge-elite","High":"badge-high","Medium":"badge-medium","Low":"badge-low"}
+    return f'<span class="{m.get(str(conf),"badge-low")}">{conf}</span>'
+
+
+def _bar(val, max_val, colour, fmt=".2f"):
+    pct = min(val/max_val*100, 100) if max_val > 0 else 0
+    return (f'<div style="display:flex;align-items:center;gap:5px;">'
+            f'<div style="flex:1;background:#1e2535;border-radius:5px;height:10px;overflow:hidden;">'
+            f'<div style="width:{pct:.0f}%;height:100%;background:{colour};border-radius:5px;"></div></div>'
+            f'<span style="font-weight:700;color:#e8ecf4;min-width:36px;font-size:.88rem;">{val:{fmt}}</span></div>')
+
+def _apply_prob_ceiling(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply physics-based probability ceiling to loaded predictions.
+    A player cannot score more goals than their shot volume × sh% allows.
+    Runs on every load so stale parquet files get corrected immediately.
+    """
+    if df.empty or "goal_probability" not in df.columns:
+        return df
+
+    LEAGUE_AVG_SH  = 0.104
+    BEST_CASE_RATE = 0.130
+    K_SHOTS        = 150
+
+    df = df.copy()
+    ceilings = []
+    for _, row in df.iterrows():
+        shots_pg    = float(row.get("season_shots_pg",
+                      row.get("rolling_5g_shots", 0)) or 0)
+        gp          = max(int(row.get("gp_season", row.get("gp", 1))), 1)
+        season_goals= int(row.get("season_goals", 0))
+        total_shots = shots_pg * gp
+        raw_sh      = season_goals / max(total_shots, 1)
+        w           = total_shots / (total_shots + K_SHOTS)
+        reg_sh      = w * raw_sh + (1 - w) * LEAGUE_AVG_SH
+        # Scale multiplier with sample — 0-goal players with < 15 GP get hard cap
+        sample_mult = min(1.5, 1.0 + 0.5 * min(total_shots / 100, 1.0))
+        ceiling     = shots_pg * min(reg_sh * sample_mult, BEST_CASE_RATE)
+        if season_goals == 0 and gp < 15:
+            ceiling = min(ceiling, 0.08)
+        ceilings.append(max(0.02, min(ceiling, 0.65)))
+
+    import numpy as np
+    raw_probs  = df["goal_probability"].values.astype(float)
+    ceil_arr   = np.array(ceilings)
+    clipped    = np.minimum(raw_probs, ceil_arr)
+    final      = 0.90 * clipped + 0.10 * np.minimum(raw_probs, 0.65)
+    df["goal_probability"] = np.round(final, 4)
+
+    def _conf(p):
+        if p >= 0.32: return "Elite"
+        if p >= 0.22: return "High"
+        if p >= 0.14: return "Medium"
+        return "Low"
+    df["confidence"] = df["goal_probability"].apply(_conf)
+    return df.sort_values("goal_probability", ascending=False).reset_index(drop=True)
+
+
+
+
+def render_nhl(selected_date_str):
+    from config import NHL_TEAMS, CURRENT_SEASON
+    from core.pipelines.nhl_pipeline import NHLPipeline
+    from app.auth import is_admin
+
+    ET = ZoneInfo("America/New_York")
+
+    # ── Session state defaults ────────────────────────────────────────────────
+    for k, v in {
+        "nhl_pipeline": None, "nhl_predictions": pd.DataFrame(),
+        "nhl_last_run": None, "nhl_running": False,
+        "nhl_teams": [], "nhl_games": [],
+        "nhl_auto_loaded": False,
+    }.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime
+    from pathlib import Path as _Path
+
+    # ── Load from pre-computed predictions first (instant) ────────────────────
+    # warm_cache.py saves predictions daily — just read the files.
+    # Admin can force a fresh run; viewers always see the saved output.
+    # Reload if empty OR if session state has a different date than the saved file
+    # If admin selected a past date, load from history parquet
+    _selected = date_str  # passed in from main.py
+    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
+    _is_today = (_selected is None or _selected == _today)
+    _hist_file = _Path("data/cache/predictions/history") / f"nhl_{_selected}.parquet" if _selected and not _is_today else None
+
+    _disk_mtime   = predictions_mtime("nhl")
+    _session_mtime = st.session_state.get("_nhl_mtime")
+    _session_date  = st.session_state.get("_nhl_date")
+    if st.session_state.nhl_predictions.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
+        # Load from history for past dates, today's parquet for today
+        _hist = Path("data/cache/predictions/history") / f"nhl_{date_str}.parquet" \
+                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
+        if _hist and _hist.exists():
+            import pandas as _pd
+            stored = dict(load_predictions("nhl"))
+            stored["predictions"] = _pd.read_parquet(_hist)
+        else:
+            stored = load_predictions("nhl")
+        if not stored["predictions"].empty:
+            st.session_state.nhl_predictions  = _apply_prob_ceiling(stored["predictions"])
+            st.session_state.nhl_games        = stored["games"]
+            st.session_state.nhl_teams        = sorted(
+                stored["predictions"]["team"].dropna().unique().tolist()
+            ) if "team" in stored["predictions"].columns else []
+            st.session_state.nhl_pipeline     = None   # no live pipeline object needed
+            st.session_state._nhl_game_proj   = stored["game_projections"]
+            st.session_state._nhl_metrics     = stored["metrics"]
+            st.session_state.nhl_last_run     = last_updated("nhl") or "pre-computed"
+            st.session_state._nhl_mtime        = _disk_mtime
+
+    # ── Admin: refresh button to re-run the full pipeline ─────────────────────
+    if is_admin():
+        if st.button("🏒 Refresh NHL Predictions", type="primary",
+                     use_container_width=True, key="nhl_load"):
+            st.session_state.nhl_running = True
+
+    # ── Pipeline execution (admin refresh only) ───────────────────────────────
+    if st.session_state.get("nhl_running", False):
+        st.session_state.nhl_running = False
+        pb   = st.progress(0.0)
+        stxt = st.empty()
+
+        def upd(msg, frac):
+            pb.progress(min(frac, 1.0))
+            stxt.markdown(f"⚙️ **{msg}**")
+
+        with st.spinner("Running NHL pipeline …"):
+>>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
             try:
                 st.session_state.nhl_predictions = pd.read_parquet(hist_file)
                 st.session_state["_nhl_date"]    = selected

@@ -37,6 +37,7 @@ def bar(val, max_val, colour, fmt=".2f"):
     )
 
 
+<<<<<<< HEAD
 # ── Session state init ────────────────────────────────────────────────────────
 
 def _init_state():
@@ -48,11 +49,85 @@ def _init_state():
         "_mlb_date":    None,
     }
     for k, v in defaults.items():
+=======
+def render_mlb(selected_date: str):
+    # ── Session state ──────────────────────────────────────────────────────────
+    for k, v in {
+        "mlb_pipeline": None, "mlb_preds": pd.DataFrame(),
+        "mlb_pitcher_preds": pd.DataFrame(),
+        "mlb_running": False, "mlb_last_run": None,
+        "mlb_games": [], "mlb_teams": [],
+        "mlb_view": "batters",
+    }.items():
+>>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
         if k not in st.session_state:
             st.session_state[k] = v
 
 
+<<<<<<< HEAD
 # ── Main renderer ─────────────────────────────────────────────────────────────
+=======
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime
+    from pathlib import Path as _Path
+
+    # ── Load from pre-computed predictions (instant) ──────────────────────────
+    # If admin selected a past date, load from history parquet
+    _selected = date_str  # passed in from main.py
+    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
+    _is_today = (_selected is None or _selected == _today)
+    _hist_file = _Path("data/cache/predictions/history") / f"mlb_{_selected}.parquet" if _selected and not _is_today else None
+
+    _disk_mtime   = predictions_mtime("mlb")
+    _session_mtime = st.session_state.get("_mlb_mtime")
+    _session_date  = st.session_state.get("_mlb_date")
+    if st.session_state.mlb_preds.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
+        # Load from history for past dates, today's parquet for today
+        _hist = Path("data/cache/predictions/history") / f"mlb_{date_str}.parquet" \
+                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
+        if _hist and _hist.exists():
+            import pandas as _pd
+            stored = dict(load_predictions("mlb"))
+            stored["predictions"] = _pd.read_parquet(_hist)
+        else:
+            stored = load_predictions("mlb")
+        if not stored["predictions"].empty:
+            st.session_state.mlb_preds         = stored["predictions"]
+            st.session_state.mlb_pitcher_preds = stored["pitcher_predictions"]
+            st.session_state.mlb_games         = stored["games"]
+            st.session_state.mlb_teams         = sorted(
+                stored["predictions"]["team"].dropna().unique().tolist()
+            ) if "team" in stored["predictions"].columns else []
+            st.session_state._mlb_game_proj    = stored["game_projections"]
+            st.session_state.mlb_last_run      = last_updated("mlb") or "pre-computed"
+            st.session_state._mlb_mtime        = _disk_mtime
+
+    # ── Admin: refresh button ─────────────────────────────────────────────────
+    if is_admin() and st.button("⚾ Refresh MLB Predictions", type="primary",
+                  use_container_width=True, key="mlb_load"):
+        st.session_state.mlb_running = True
+
+    if st.session_state.mlb_running:
+        st.session_state.mlb_running = False
+        pb = st.progress(0.0); stxt = st.empty()
+        def upd(msg, f):
+            pb.progress(min(f,1.0)); stxt.markdown(f"⚙️ **{msg}**")
+        with st.spinner("Running MLB pipeline …"):
+            try:
+                pipe  = MLBPipeline()
+                preds = pipe.run(force_retrain=force_retrain,
+                                 status_callback=upd, date=selected_date)
+                st.session_state.mlb_pipeline      = pipe
+                st.session_state.mlb_preds         = preds
+                st.session_state.mlb_pitcher_preds = getattr(pipe,"pitcher_predictions",pd.DataFrame())
+                st.session_state.mlb_games         = pipe.get_games()
+                st.session_state.mlb_teams         = pipe.get_teams_playing()
+                st.session_state._mlb_game_proj    = pipe.game_proj
+                st.session_state.mlb_last_run      = datetime.now(ET).strftime("%I:%M %p ET")
+                pb.progress(1.0); stxt.markdown("✅ **Done!**"); time.sleep(0.5)
+            except Exception as e:
+                st.error(f"MLB Pipeline error: {e}"); st.exception(e)
+        pb.empty(); stxt.empty(); st.rerun()
+>>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
 
 def render_mlb(date_str: str):
     _init_state()

@@ -26,6 +26,7 @@ def badge(conf):
 
 
 def bar(val, max_val, colour, fmt=".1f"):
+<<<<<<< HEAD
     pct = min(val / max_val * 100, 100) if max_val > 0 else 0
     return (
         f'<div style="display:flex;align-items:center;gap:5px;">'
@@ -79,6 +80,64 @@ def render_nba(date_str: str):
 
     if need_reload:
         if not is_today and hist_file and hist_file.exists():
+=======
+    pct = min(val/max_val*100,100) if max_val>0 else 0
+    return (f'<div style="display:flex;align-items:center;gap:5px;">'
+            f'<div style="flex:1;background:#1e2535;border-radius:5px;height:10px;overflow:hidden;">'
+            f'<div style="width:{pct:.0f}%;height:100%;background:{colour};border-radius:5px;"></div></div>'
+            f'<span style="font-weight:700;color:#e8ecf4;min-width:34px;font-size:.88rem;">{val:{fmt}}</span></div>')
+
+def render_nba(selected_date: str):
+    for k,v in {"nba_pipeline":None,"nba_preds":pd.DataFrame(),
+                "nba_running":False,"nba_last_run":None,
+                "nba_games":[],"nba_teams":[]}.items():
+        if k not in st.session_state: st.session_state[k]=v
+
+
+    from app.prediction_store import load_predictions, last_updated, predictions_mtime
+    from pathlib import Path as _Path
+
+    # ── Load from pre-computed predictions (instant) ──────────────────────────
+    # If admin selected a past date, load from history parquet
+    _selected = date_str  # passed in from main.py
+    _today    = datetime.now(ET).strftime("%Y-%m-%d") if _selected else None
+    _is_today = (_selected is None or _selected == _today)
+    _hist_file = _Path("data/cache/predictions/history") / f"nba_{_selected}.parquet" if _selected and not _is_today else None
+
+    _disk_mtime   = predictions_mtime("nba")
+    _session_mtime = st.session_state.get("_nba_mtime")
+    _session_date  = st.session_state.get("_nba_date")
+    if st.session_state.nba_preds.empty or (_selected != _session_date) or (_is_today and _disk_mtime and _disk_mtime != _session_mtime):
+        # Load from history for past dates, today's parquet for today
+        _hist = Path("data/cache/predictions/history") / f"nba_{date_str}.parquet" \
+                if date_str and date_str != datetime.now(ET).strftime("%Y-%m-%d") else None
+        if _hist and _hist.exists():
+            import pandas as _pd
+            stored = dict(load_predictions("nba"))
+            stored["predictions"] = _pd.read_parquet(_hist)
+        else:
+            stored = load_predictions("nba")
+        if not stored["predictions"].empty:
+            st.session_state.nba_preds      = stored["predictions"]
+            st.session_state.nba_games      = stored["games"]
+            st.session_state.nba_teams      = sorted(
+                stored["predictions"]["team"].dropna().unique().tolist()
+            ) if "team" in stored["predictions"].columns else []
+            st.session_state._nba_game_proj = stored["game_projections"]
+            st.session_state.nba_last_run   = last_updated("nba") or "pre-computed"
+            st.session_state._nba_mtime        = _disk_mtime
+
+    # ── Admin: refresh button ─────────────────────────────────────────────────
+    if is_admin() and st.button("🏀 Refresh NBA Predictions", type="primary",
+                  use_container_width=True, key="nba_load"):
+        st.session_state.nba_running = True
+
+    if st.session_state.nba_running:
+        st.session_state.nba_running = False
+        pb=st.progress(0.0); stxt=st.empty()
+        def upd(msg,f): pb.progress(min(f,1.0)); stxt.markdown(f"⚙️ **{msg}**")
+        with st.spinner("Running NBA pipeline …"):
+>>>>>>> 3121e961f582ee3232ca419619d5a552ccea5d9e
             try:
                 st.session_state.nba_preds      = pd.read_parquet(hist_file)
                 st.session_state["_nba_date"]   = selected

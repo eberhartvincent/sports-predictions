@@ -114,7 +114,7 @@ def nhl_section(data: dict) -> str:
     if df.empty:
         return html + no_data("No NHL data available.")
 
-    def _cat_table(title, sort_col, val_col, val_label, val_fmt=".3f", color="#c0392b"):
+    def _cat_table(title, sort_col, conf_col, val_label, val_fmt=".3f", color="#c0392b"):
         if sort_col not in df.columns: return ""
         top = df.sort_values(sort_col, ascending=False).head(TOP_CAT)
         h  = f'<div style="margin-bottom:16px;">'
@@ -123,7 +123,7 @@ def nhl_section(data: dict) -> str:
         h += table_header("#","Player","Team","Opp",val_label,"Conf","Szn G/A")
         for i,(_, r) in enumerate(top.iterrows(),1):
             val  = float(r.get(sort_col, 0))
-            conf = str(r.get("conf_goals" if "goal" in sort_col else "conf_sog", r.get("confidence","Low")))
+            conf = str(r.get(conf_col, r.get("confidence","Low")))
             cc   = "#c0392b" if conf=="Elite" else "#e67e22" if conf=="High" else "#2980b9"
             sg   = int(r.get("season_goals",0)); sa = int(r.get("season_assists",0))
             h += row_start(i)
@@ -138,10 +138,10 @@ def nhl_section(data: dict) -> str:
         h += '</table></div>'
         return h
 
-    html += _cat_table(f"🥅 Top {TOP_CAT} — Goal Scorers",    "goal_probability",  "goal_probability",  "Goal Prob", ".3f", "#c0392b")
-    html += _cat_table(f"🏒 Top {TOP_CAT} — Shots on Goal",   "projected_sog",     "projected_sog",     "Proj SOG",  ".1f", "#2980b9")
-    html += _cat_table(f"🍎 Top {TOP_CAT} — Assists",         "projected_assists",  "projected_assists", "Proj Ast",  ".2f", "#16a085")
-    html += _cat_table(f"⭐ Top {TOP_CAT} — Points",          "projected_points",   "projected_points",  "Proj Pts",  ".2f", "#8e44ad")
+    html += _cat_table(f"🥅 Top {TOP_CAT} — Goal Scorers",  "goal_probability",  "conf_goals", "Goal Prob", ".3f", "#c0392b")
+    html += _cat_table(f"🏒 Top {TOP_CAT} — Shots on Goal", "projected_sog",     "conf_sog",   "Proj SOG",  ".1f", "#2980b9")
+    html += _cat_table(f"🍎 Top {TOP_CAT} — Assists",       "projected_assists", "conf_ast",   "Proj Ast",  ".2f", "#16a085")
+    html += _cat_table(f"⭐ Top {TOP_CAT} — Points",        "projected_points",  "conf_pts",   "Proj Pts",  ".2f", "#8e44ad")
 
     if data.get("game_projections") and len(data["game_projections"]) > 0:
         html += _nhl_game_proj(data["game_projections"])
@@ -180,14 +180,13 @@ def _mlb_pitcher_table(preds: "pd.DataFrame") -> str:
         h  = f'<div style="margin-bottom:16px;">'
         h += f'<h3 style="font-size:13px;color:#495057;margin:0 0 6px;">{title}</h3>'
         h += '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
-        h += table_header("Pitcher","Team","Opp","Hand","Value","ERA","Proj IP")
+        h += table_header("Pitcher","Team","Opp","Value","ERA","Proj IP")
         for i,(_, r) in enumerate(rows.iterrows()):
             name = r.get("pitcher_name", r.get("player_name",""))
             h += row_start(i)
             h += td(f'<strong>{name}</strong>')
             h += td(r.get("team",""), color="#1565c0", bold=True)
             h += td(r.get("opponent",""), color="#6c757d")
-            h += td(r.get("pitcher_hand",""), color="#6c757d")
             yield_col = r.get("proj_k",0)
             h += proj_cell(float(yield_col), color="#8e44ad")
             h += td(f'{float(r.get("era",0)):.2f}', color="#6c757d")
@@ -288,11 +287,11 @@ def mlb_section(data: dict) -> str:
         return h
 
     html += _cat(f"🎯 Top {TOP_CAT} — H+R+RBI",    "proj_hrr",  "conf_hrr",  "Proj HRR",  ".2f", "#f59e0b")
-    html += _cat(f"🏆 Top {TOP_CAT} — Hits",        "proj_hits", "conf_hits", "Proj H",    ".3f", "#27ae60")
+    html += _cat(f"🏆 Top {TOP_CAT} — Hits",        "proj_hits", "conf_hits", "Proj H",    ".2f", "#27ae60")
     html += _cat(f"💣 Top {TOP_CAT} — Home Runs",   "proj_hr",   "conf_hr",   "HR Prob",   ".3f", "#c0392b")
     html += _cat(f"🏃 Top {TOP_CAT} — RBI",         "proj_rbi",  "conf_rbi",  "Proj RBI",  ".2f", "#e67e22")
     html += _cat(f"⚡ Top {TOP_CAT} — Runs Scored", "proj_runs", "conf_runs", "Proj R",    ".2f", "#16a085")
-    html += _cat(f"💥 Top {TOP_CAT} — Total Bases",  "proj_tb",   "conf_hrr",  "Proj TB",   ".2f", "#8e44ad")
+    html += _cat(f"💥 Top {TOP_CAT} — Total Bases",  "proj_tb",   "conf_tb",   "Proj TB",   ".2f", "#8e44ad")
 
     preds = data.get("pitcher_predictions", pd.DataFrame())
     if not preds.empty:
@@ -414,6 +413,16 @@ def _apply_prob_ceiling(df):
         df["conf_sog"] = pd.cut(
             df["projected_sog"].fillna(0).values.astype(float),
             bins  = [-np.inf, 2.0, 3.0, 4.0, np.inf],
+            labels= ["Low", "Medium", "High", "Elite"]).astype(str)
+    if "projected_assists" in df.columns:
+        df["conf_ast"] = pd.cut(
+            df["projected_assists"].fillna(0).values.astype(float),
+            bins  = [-np.inf, 0.10, 0.20, 0.32, np.inf],
+            labels= ["Low", "Medium", "High", "Elite"]).astype(str)
+    if "projected_points" in df.columns:
+        df["conf_pts"] = pd.cut(
+            df["projected_points"].fillna(0).values.astype(float),
+            bins  = [-np.inf, 0.20, 0.35, 0.50, np.inf],
             labels= ["Low", "Medium", "High", "Elite"]).astype(str)
     return df.sort_values("goal_probability", ascending=False).reset_index(drop=True)
 

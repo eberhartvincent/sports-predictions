@@ -857,10 +857,13 @@ class MLBPipeline:
                     LG_TB_PG       = 1.22
 
                     # ── HR regression — the most critical calculation ──────
-                    # K_HR=600: HR rates don't statistically stabilize until
-                    # ~600 PA. Using 150 made every 40-AB player look like a
-                    # league-average HR threat. 600 keeps zero-HR players low.
-                    K_HR  = 600
+                    # K_HR controls how quickly we trust individual HR rate.
+                    # HR rates stabilize at ~600 PA over a full career but
+                    # within a single season we want to trust recent data more.
+                    # Scale K with season progress: early season = more regression,
+                    # mid/late season = more trust in actual data.
+                    # K=300 at start, drops to K=150 by 300 AB.
+                    K_HR  = max(150, 300 - int(total_ab / 3))
                     K_HIT = 150   # hits stabilize faster than HRs
 
                     player_hr_per_ab  = total_hr / max(total_ab, 1)
@@ -946,6 +949,49 @@ class MLBPipeline:
                         row.get("proj_hits", 0) +
                         row.get("proj_runs", 0) +
                         row.get("proj_rbi",  0), 2
+                    )
+
+                    # ── Per-category confidence tiers ─────────────────────────
+                    # Each stat gets its own tier so sorting by HR shows
+                    # HR-specific confidence, not just overall hit confidence.
+                    hr  = row.get("proj_hr",   0)
+                    rbi = row.get("proj_rbi",  0)
+                    r   = row.get("proj_runs", 0)
+                    tb  = row.get("proj_tb",   0)
+                    hrr = row.get("proj_hrr",  0)
+                    k   = row.get("proj_k",    0)
+
+                    # HR confidence: based on HR probability vs league avg 0.107/game
+                    row["conf_hr"] = (
+                        "Elite"  if hr  >= 0.28 else
+                        "High"   if hr  >= 0.18 else
+                        "Medium" if hr  >= 0.10 else "Low"
+                    )
+                    # RBI confidence
+                    row["conf_rbi"] = (
+                        "Elite"  if rbi >= 1.20 else
+                        "High"   if rbi >= 0.80 else
+                        "Medium" if rbi >= 0.50 else "Low"
+                    )
+                    # Runs confidence
+                    row["conf_runs"] = (
+                        "Elite"  if r   >= 1.10 else
+                        "High"   if r   >= 0.75 else
+                        "Medium" if r   >= 0.50 else "Low"
+                    )
+                    # H+R+RBI confidence
+                    row["conf_hrr"] = (
+                        "Elite"  if hrr >= 2.80 else
+                        "High"   if hrr >= 2.00 else
+                        "Medium" if hrr >= 1.40 else "Low"
+                    )
+                    # Hits confidence (same as overall but explicit)
+                    row["conf_hits"] = row["confidence"]
+                    # Strikeout confidence (for pitcher props)
+                    row["conf_k"] = (
+                        "Elite"  if k   >= 1.40 else
+                        "High"   if k   >= 1.00 else
+                        "Medium" if k   >= 0.65 else "Low"
                     )
                     rows.append(row)
 

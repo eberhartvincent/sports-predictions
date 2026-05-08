@@ -230,6 +230,17 @@ def _render_batters(preds, games, pipeline):
                     "Proj RBI":"proj_rbi","Proj R":"proj_runs","Proj TB":"proj_tb","Proj K":"proj_k"}
         sel_sort = st.selectbox("Sort", list(sort_map.keys()), key="mlb_b_sort", label_visibility="collapsed")
         sc = sort_map[sel_sort]
+    # Map sort column to the right confidence column
+    conf_col_map = {
+        "proj_hrr":  "conf_hrr",
+        "proj_hits": "conf_hits",
+        "proj_hr":   "conf_hr",
+        "proj_rbi":  "conf_rbi",
+        "proj_runs": "conf_runs",
+        "proj_tb":   "conf_hrr",  # TB uses same tier as HRR
+        "proj_k":    "conf_k",
+    }
+    active_conf_col = conf_col_map.get(sc, "confidence")
     with f4:
         sel_conf = st.selectbox("Confidence", ["All","Elite","High","Medium","Low"],
                                 key="mlb_b_conf", label_visibility="collapsed")
@@ -239,12 +250,14 @@ def _render_batters(preds, games, pipeline):
     filt = preds.copy()
     if ft:  filt = filt[filt["team"]==ft]
     if fg:  filt = filt[filt["game_label"]==fg]
-    if sel_conf != "All" and "confidence" in filt.columns:
-        filt = filt[filt["confidence"]==sel_conf]
+    # Filter by the confidence column that matches the active sort
+    if sel_conf != "All":
+        conf_filter_col = active_conf_col if active_conf_col in filt.columns else "confidence"
+        filt = filt[filt[conf_filter_col]==sel_conf]
     if sc in filt.columns:
         filt = filt.sort_values(sc, ascending=False)
     disp = filt.head(int(top_n))
-    st.caption(f"Showing {len(disp)} of {len(filt)} batters · sorted by {sel_sort}")
+    st.caption(f"Showing {len(disp)} of {len(filt)} batters · sorted by {sel_sort} · confidence = {sel_sort} tier")
 
     if disp.empty:
         st.info("No batters match filters."); return
@@ -263,7 +276,8 @@ def _render_batters(preds, games, pipeline):
         name    = row.get("player_name","")
         team    = row.get("team","")
         opp     = row.get("opponent","")
-        conf    = str(row.get("confidence","Low"))
+        # Show confidence for the active sort category, not just overall
+        conf    = str(row.get(active_conf_col, row.get("confidence","Low")))
         gp      = int(row.get("gp",0))
         savg    = float(row.get("season_avg",0))
         shr     = int(row.get("season_hr",0))

@@ -53,9 +53,9 @@ MLB_DEFAULT_ERA         = 4.20
 MLB_DEFAULT_WHIP        = 1.30
 MLB_DEFAULT_K9          = 8.5
 MLB_PITCHER_RECENT_STARTS = 5
-MLB_LEAGUE_AVG_RUNS     = 4.5
+MLB_LEAGUE_AVG_RUNS     = 4.15  # 2026 actual: ~4.15 R/team/game (8.3 total)
 MLB_HOME_ADVANTAGE_RUNS = 0.1
-MLB_REGRESSION_WEIGHT   = 0.40
+MLB_REGRESSION_WEIGHT   = 0.55  # stronger pull toward league avg
 # MLB confidence — based on proj_hits (hit probability)
 # Elite: top ~5% of hitters on any given day (~0.80+ hit prob)
 # High:  top ~15%
@@ -79,8 +79,8 @@ NBA_TTL_SCHEDULE        = 60
 NBA_TTL_ROSTER          = 180
 NBA_TTL_GAME_LOGS       = 120
 NBA_LEAGUE_AVG_PTS      = 112.0
-NBA_HOME_ADVANTAGE_PTS  = 2.0
-NBA_REGRESSION_WEIGHT   = 0.35
+NBA_HOME_ADVANTAGE_PTS  = 1.5  # playoffs: top away seeds consistently win
+NBA_REGRESSION_WEIGHT   = 0.45  # increased — playoffs have more variance
 NBA_SPREAD_SIGMA        = 11.0
 
 # NBA confidence — based on proj_pts

@@ -1,0 +1,40 @@
+name: Send Predictions Email
+
+on:
+  workflow_dispatch:  # manual trigger only — uses whatever parquets are already in the repo
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check prediction files exist
+        run: |
+          echo "--- Prediction files available ---"
+          ls -lh data/cache/predictions/*.parquet 2>/dev/null || echo "WARNING: no parquet files found"
+          ls -lh data/cache/predictions/*.json    2>/dev/null || echo "WARNING: no json files found"
+
+      - name: Send predictions email
+        env:
+          EMAIL_SENDER:     ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:   ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+        run: python scripts/send_predictions_email.py

@@ -26,7 +26,7 @@ TODAY        = datetime.now(ET).strftime("%Y-%m-%d")
 TODAY_LONG   = datetime.now(ET).strftime("%A, %B %d, %Y")
 TODAY_SHORT  = datetime.now(ET).strftime("%b %d")
 TOP_N        = 10   # overall list
-TOP_CAT      = 5    # per-category lists
+TOP_CAT      = 10   # per-category lists
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ def nhl_section(data: dict) -> str:
     html += _cat_table("🥅 Top 5 — Goal Scorers",    "goal_probability", "goal_probability", "Goal Prob", ".3f", "#c0392b")
     html += _cat_table("🏒 Top 5 — Shots on Goal",   "projected_sog",    "projected_sog",    "Proj SOG",  ".1f", "#2980b9")
 
-    if data["game_projections"]:
+    if data.get("game_projections") and len(data["game_projections"]) > 0:
         html += _nhl_game_proj(data["game_projections"])
     return html
 
@@ -276,12 +276,12 @@ def mlb_section(data: dict) -> str:
     html += _cat("💣 Top 5 — Home Runs",   "proj_hr",   "conf_hr",   "HR Prob",   ".3f", "#c0392b")
     html += _cat("🏃 Top 5 — RBI",         "proj_rbi",  "conf_rbi",  "Proj RBI",  ".2f", "#e67e22")
     html += _cat("⚡ Top 5 — Runs Scored", "proj_runs", "conf_runs", "Proj R",    ".2f", "#16a085")
-    html += _cat("🔥 Top 5 — Strikeouts",  "proj_k",    "conf_k",    "Proj K",    ".2f", "#6c757d")
+    html += _cat("💥 Top 5 — Total Bases",  "proj_tb",   "conf_hrr",  "Proj TB",   ".2f", "#8e44ad")
 
     preds = data.get("pitcher_predictions", pd.DataFrame())
     if not preds.empty:
         html += _mlb_pitcher_table(preds)
-    if data["game_projections"]:
+    if data.get("game_projections") and len(data["game_projections"]) > 0:
         html += _mlb_game_proj(data["game_projections"])
     return html
 
@@ -327,7 +327,7 @@ def nba_section(data: dict) -> str:
     html += _cat("🛡 Top 5 — Stl+Blk",     "proj_stocks", "conf_stocks", "Proj Stk", ".1f", "#c0392b")
     html += _cat("⭐ Top 5 — Double-Double","proj_dd",     "conf_dd",     "DD Prob",  ".0%", "#f59e0b")
 
-    if data["game_projections"]:
+    if data.get("game_projections") and len(data["game_projections"]) > 0:
         html += _nba_game_proj(data["game_projections"])
     return html
 

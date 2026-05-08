@@ -82,23 +82,35 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Fetch latest from origin so we commit on top of any changes
-          # made since checkout (e.g. code pushes during the workflow run).
-          git fetch origin main
-          git checkout origin/main -- . 2>/dev/null || true
+          # Stage the freshly generated prediction files FIRST
+          # before fetching, so git checkout can't overwrite them
+          mkdir -p data/cache/predictions/history
 
-          # Re-add the freshly generated prediction files on top
           git add -f data/cache/predictions/*.parquet 2>/dev/null || true
           git add -f data/cache/predictions/*.json    2>/dev/null || true
-          # Also commit daily history snapshots (needed for backtest)
           git add -f data/cache/predictions/history/*.parquet 2>/dev/null || true
 
+          # If nothing changed there's nothing to do
           if git diff --staged --quiet; then
             echo "No prediction changes to commit"
-          else
-            echo "Committing prediction files:"
-            git diff --staged --name-only
-            DATE=$(TZ="America/New_York" date +%Y-%m-%d)
-            git commit -m "chore: predictions ${DATE} [skip ci]"
-            git push origin main
+            exit 0
           fi
+
+          echo "Files to commit:"
+          git diff --staged --name-only
+
+          # Pull any code changes that happened during the run (rebase our
+          # prediction-file commit on top, keeping our staged changes intact)
+          git stash -u  # stash everything including untracked
+          git fetch origin main
+          git rebase origin/main || git rebase --abort
+          git stash pop 2>/dev/null || true
+
+          # Re-stage after stash pop (stash pop may unstage)
+          git add -f data/cache/predictions/*.parquet 2>/dev/null || true
+          git add -f data/cache/predictions/*.json    2>/dev/null || true
+          git add -f data/cache/predictions/history/*.parquet 2>/dev/null || true
+
+          DATE=$(TZ="America/New_York" date +%Y-%m-%d)
+          git commit -m "chore: predictions ${DATE} [skip ci]"
+          git push origin main

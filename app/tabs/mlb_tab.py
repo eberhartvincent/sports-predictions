@@ -38,7 +38,7 @@ def _bar(val, max_val, colour, fmt=".2f"):
     )
 
 
-def render_mlb(selected_date: str, force_retrain: bool):
+def render_mlb(selected_date: str):
     # ── Session state ──────────────────────────────────────────────────────────
     for k, v in {
         "mlb_pipeline": None, "mlb_preds": pd.DataFrame(),

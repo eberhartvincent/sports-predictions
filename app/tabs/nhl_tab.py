@@ -68,7 +68,7 @@ def _apply_prob_ceiling(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-def render_nhl(selected_date_str, force_retrain):
+def render_nhl(selected_date_str):
     from config import NHL_TEAMS, CURRENT_SEASON
     from core.pipelines.nhl_pipeline import NHLPipeline
     from app.auth import is_admin

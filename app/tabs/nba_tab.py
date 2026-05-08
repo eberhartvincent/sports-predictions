@@ -23,7 +23,7 @@ def bar(val, max_val, colour, fmt=".1f"):
             f'<div style="width:{pct:.0f}%;height:100%;background:{colour};border-radius:5px;"></div></div>'
             f'<span style="font-weight:700;color:#e8ecf4;min-width:34px;font-size:.88rem;">{val:{fmt}}</span></div>')
 
-def render_nba(selected_date: str, force_retrain: bool):
+def render_nba(selected_date: str):
     for k,v in {"nba_pipeline":None,"nba_preds":pd.DataFrame(),
                 "nba_running":False,"nba_last_run":None,
                 "nba_games":[],"nba_teams":[]}.items():

@@ -1,7 +1,4 @@
-"""
-app/pages/backtest_page.py
-Admin-only backtesting report rendered inside the main app.
-"""
+"""app/pages/backtest_page.py — Admin backtesting report"""
 
 import json
 from datetime import datetime
@@ -14,208 +11,414 @@ import pandas as pd
 
 ET       = ZoneInfo("America/New_York")
 PRED_DIR = Path("data/cache/predictions")
+HIST_DIR = PRED_DIR / "history"
 BT_FILE  = PRED_DIR / "backtest_results.json"
+
+CONF_COLORS = {
+    "Elite": "#c0392b",
+    "High":  "#e67e22",
+    "Medium":"#2980b9",
+    "Low":   "#6c757d",
+}
+
+
+def _history_counts():
+    if not HIST_DIR.exists():
+        return {}
+    today = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    counts = {}
+    for sport in ("nhl","mlb","nba"):
+        files = sorted(
+            f for f in HIST_DIR.glob(f"{sport}_*.parquet")
+            if f.stem.replace(f"{sport}_","") < today
+        )
+        counts[sport] = {
+            "n":     len(files),
+            "dates": [f.stem.replace(f"{sport}_","") for f in files],
+        }
+    return counts
+
+
+def _metric(col, label, value, help=None, good=None, bad=None):
+    """Render a metric with colour coding when thresholds provided."""
+    delta = None; delta_color = "off"
+    if good is not None and isinstance(value, float):
+        if value >= good:
+            delta = "good"; delta_color = "normal"
+        elif bad is not None and value <= bad:
+            delta = "needs improvement"; delta_color = "inverse"
+    with col:
+        st.metric(label, value, delta=delta, delta_color=delta_color, help=help)
 
 
 def render_backtest():
     st.markdown("## 🔬 Backtesting Report")
-    st.caption("Compares past predictions against actual results to measure model accuracy.")
+    st.caption("How accurate were yesterday's predictions? Compares pre-game picks against actual results.")
 
-    # ── Run / refresh ─────────────────────────────────────────────────────────
-    c1, c2 = st.columns([3, 1])
+    history = _history_counts()
+    total   = max((v["n"] for v in history.values()), default=0)
+
+    # History status
+    c1, c2, c3 = st.columns(3)
+    for col, sport, emoji in [(c1,"nhl","🏒"),(c2,"mlb","⚾"),(c3,"nba","🏀")]:
+        n     = history.get(sport,{}).get("n", 0)
+        dates = history.get(sport,{}).get("dates",[])
+        span  = f"{dates[0]} → {dates[-1]}" if len(dates)>=2 else (dates[0] if dates else "none yet")
+        with col:
+            st.metric(f"{emoji} {sport.upper()} Days Saved", n,
+                      delta=span if n else "Run workflow to start",
+                      delta_color="normal" if n >= 7 else "off")
+
+    if total == 0:
+        st.info("""
+        **No history yet — totally normal if you just set this up.**
+
+        Every morning at 11 AM the GitHub Actions workflow runs and saves that day's
+        predictions as a snapshot. After a week of snapshots, come back here and
+        click **Run Backtest** to see how the model is performing.
+        """)
+        st.markdown("### What you'll see once you have data")
+        st.markdown("""
+        | Metric | Plain English |
+        |--------|---------------|
+        | **Accuracy** | Out of every 10 Elite picks, how many actually happened? |
+        | **Calibration error** | When we say 30% chance, does it happen ~30% of the time? |
+        | **Brier score** | Overall probability quality — lower is better, 0.25 = random guessing |
+        | **AUC** | Can the model rank players correctly? 0.5 = coin flip, 1.0 = perfect |
+        | **Elite ROI** | If you bet $1 on every Elite pick, did you make money? |
+        | **MAE** | On average, how many hits/goals/points off were we? |
+        | **Bias** | Do we consistently over-predict or under-predict? |
+        """)
+        return
+
+    # Run controls
+    st.divider()
+    max_days = min(total, 90)
+    c1, c2 = st.columns([3,1])
     with c1:
-        days = st.slider("Days to analyse", 7, 90, 30, 7)
+        if max_days <= 1:
+            days = max_days
+            st.info(f"Only {max_days} completed day(s) of history available.")
+        else:
+            days = st.slider("How many past days to analyse", 1, max_days,
+                             min(14, max_days), 1)
     with c2:
-        run_btn = st.button("▶ Run Backtest", type="primary",
-                            use_container_width=True)
+        run_btn = st.button("▶ Run Backtest", type="primary", use_container_width=True)
 
     if run_btn:
-        with st.spinner(f"Running backtest over last {days} days…"):
+        with st.spinner(f"Fetching actual results and comparing against predictions…"):
             try:
                 import sys
                 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
                 from scripts.backtest import run_backtest
-                results = run_backtest(days)
-                st.success("Backtest complete!")
+                run_backtest(days)
+                st.success("Done!")
+                st.rerun()
             except Exception as e:
-                st.error(f"Backtest error: {e}")
-                st.exception(e)
-                return
+                st.error(f"Error: {e}"); st.exception(e); return
 
-    # ── Load saved results ─────────────────────────────────────────────────────
     if not BT_FILE.exists():
-        st.info("No backtest results yet. Click **Run Backtest** above to generate them.")
-        st.markdown("""
-        **What the backtest measures:**
-        - **NHL:** For each confidence tier, what % of predicted scorers actually scored
-        - **MLB:** Mean absolute error on H, H+R+RBI projections by confidence tier
-        - **Calibration:** Whether a 30% prediction actually hits ~30% of the time
-        - **Elite ROI estimate:** Simulated return if betting $1 on every Elite pick at +150 odds
-        
-        **Note:** History accumulates daily as the workflow runs. 
-        You need at least 7 days of saved predictions for meaningful results.
-        """)
+        st.info("Click **▶ Run Backtest** to generate the report.")
         return
 
     try:
         results = json.loads(BT_FILE.read_text())
     except Exception as e:
-        st.error(f"Could not load results: {e}")
+        st.error(f"Could not load results: {e}"); return
+
+    for sd in results.values():
+        if sd.get("updated_at"):
+            dt = datetime.fromisoformat(sd["updated_at"]).astimezone(ET)
+            st.caption(f"Last run: {dt.strftime('%I:%M %p ET on %b %d, %Y')}")
+            break
+
+    # ── NHL ───────────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 🏒 NHL — Goal Predictions")
+    _render_nhl(results.get("nhl", {}))
+
+    # ── MLB ───────────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### ⚾ MLB — Batter Predictions")
+    _render_mlb(results.get("mlb", {}))
+
+    # ── NBA ───────────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 🏀 NBA — Player Predictions")
+    _render_nba(results.get("nba", {}))
+
+    st.divider()
+    with st.expander("📖 How to read these results"):
+        st.markdown("""
+        **Accuracy** — The % of predictions that were correct.
+        Elite picks should be right more often than the baseline (NHL ~15%, MLB ~25%, NBA varies).
+
+        **Calibration error** — If the model says "30% chance", does it happen about 30% of the time?
+        A value near 0 means yes. A value near 0.10 means the probabilities are off by ~10 percentage points.
+
+        **Brier score** — A single number for overall probability quality.
+        - 0.00 = perfect predictions  
+        - 0.25 = pure random guessing  
+        - Lower is always better
+
+        **AUC** — Can the model correctly rank higher-probability players above lower ones?
+        - 0.50 = no better than random  
+        - 0.60+ = genuinely useful  
+        - 0.70+ = strong
+
+        **Elite ROI at +150** — If you bet $1 on every Elite pick at +150 American odds,
+        what would your return be? Positive = profit, negative = loss.
+
+        **MAE (Mean Absolute Error)** — How many hits/goals/points off was the projection on average.
+        Smaller is better. For MLB hits, < 0.35 is good.
+
+        **Bias** — Positive bias = we over-predicted. Negative = under-predicted.
+        Close to 0 is ideal.
+
+        **Calibration curve** — The diagonal chart. If dots fall on the diagonal line,
+        predictions are perfectly calibrated. Above = under-confident. Below = over-confident.
+        """)
+
+
+def _status_check(sport_data: dict) -> tuple:
+    """Returns (agg, files, failures, msg, ok) — ok=True if we have data to show."""
+    agg      = sport_data.get("aggregate", {})
+    files    = sport_data.get("files_found",  agg.get("files_found",  0))
+    failures = sport_data.get("api_failures", agg.get("api_failures", 0))
+    n_rows   = sport_data.get("n_rows",       agg.get("n_rows",       0))
+    msg      = sport_data.get("message",      agg.get("message",      ""))
+    return agg, files, failures, n_rows, msg
+
+
+def _render_nhl(nhl: dict):
+    agg, files, failures, n_rows, msg = _status_check(nhl)
+
+    if files == 0:
+        st.info("No history snapshots yet."); return
+    if n_rows == 0:
+        st.warning(
+            f"Found {files} history file(s) but the NHL API blocked requests "
+            f"({failures}/{files} dates). The NHL API (api-web.nhle.com) sometimes "
+            "blocks cloud IP ranges. Run `python scripts/backtest.py --days 7` "
+            "from the Codespaces terminal for better results."
+        )
+        if msg: st.caption(msg)
         return
 
-    updated = None
-    for sport_data in results.values():
-        if sport_data.get("updated_at"):
-            updated = sport_data["updated_at"]
-            break
-    if updated:
-        dt = datetime.fromisoformat(updated).astimezone(ET)
-        st.caption(f"Last run: {dt.strftime('%I:%M %p ET on %b %d, %Y')}")
+    st.caption(f"Based on {files} days · {n_rows} player-games · "
+               f"{failures} API failures")
+    if msg: st.info(msg)
 
-    # ── NHL Results ────────────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("### 🏒 NHL — Goal Probability Accuracy")
+    stats = agg.get("stats", {}).get("Goal Scoring", {})
+    c1,c2,c3,c4 = st.columns(4)
+    _metric(c1, "Overall Accuracy",
+            f"{stats.get('overall_accuracy',0):.1%}",
+            help="What % of all predicted scorers actually scored")
+    _metric(c2, "Brier Score",
+            f"{stats.get('brier_score',0):.4f}",
+            help="Probability quality. 0.00=perfect, 0.25=random. Lower=better")
+    _metric(c3, "Calibration Error",
+            f"{stats.get('calibration_error',0):.4f}",
+            help="How far off are the probabilities on average. Closer to 0=better")
+    if stats.get("auc"):
+        _metric(c4, "AUC",
+                f"{stats.get('auc',0):.3f}",
+                help="Ranking quality. 0.50=random, 0.60+=useful, 0.70+=strong")
 
-    nhl = results.get("nhl", {})
-    if nhl.get("message") or nhl.get("error"):
-        st.info(nhl.get("message") or nhl.get("error"))
-    else:
-        agg = nhl.get("aggregate", {})
-        tiers = agg.get("tiers", {})
+    elite = agg.get("elite_n")
+    if elite:
+        r150 = agg.get("elite_roi_plus150", 0)
+        rc   = "normal" if r150 > 0 else "inverse"
+        st.markdown(
+            f"**Elite picks:** {elite} total · "
+            f"Accuracy: **{agg.get('elite_accuracy',0):.1%}** · "
+            f"ROI at +150 odds: **{r150:+.1%}** · "
+            f"+130: **{agg.get('elite_roi_plus130',0):+.1%}** · "
+            f"+110: **{agg.get('elite_roi_plus110',0):+.1%}**"
+        )
 
-        if tiers:
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.metric("Games Analysed", agg.get("n_games","—"))
-            with m2:
-                bs = agg.get("brier_score")
-                st.metric("Brier Score", f"{bs:.4f}" if bs else "—",
-                          help="Lower = better calibrated. Random = 0.25")
-            with m3:
-                roi = agg.get("elite_roi_estimate")
-                if roi is not None:
-                    color = "normal" if roi > 0 else "inverse"
-                    st.metric("Elite Pick ROI", f"{roi:+.1%}",
-                              delta=f"{'profit' if roi>0 else 'loss'} per $1 bet",
-                              delta_color=color)
+    if agg.get("stats",{}).get("Shots on Goal"):
+        sog_mae = agg["stats"]["Shots on Goal"]["mae"]
+        st.caption(f"Shot projection error: ±{sog_mae:.2f} shots/game on average")
 
-            # Tier breakdown table
-            tier_rows = []
-            for conf, t in tiers.items():
-                tier_rows.append({
-                    "Tier":         conf,
-                    "Picks":        t["n"],
-                    "Accuracy":     f"{t['accuracy']:.1%}",
-                    "Avg Pred":     f"{t['avg_pred']:.3f}",
-                    "Calibration Err": f"{t['calibration_err']:.3f}",
-                })
-            st.dataframe(pd.DataFrame(tier_rows), use_container_width=True,
-                         hide_index=True)
+    tiers = agg.get("tiers", {})
+    if tiers:
+        st.markdown("**Accuracy by confidence tier:**")
+        rows = []
+        for t, v in tiers.items():
+            rows.append({
+                "Tier":             t,
+                "Picks":            v["n"],
+                "Scored %":         f"{v['accuracy']:.1%}",
+                "We Predicted %":   f"{v['avg_predicted']:.1%}",
+                "Calibration Off":  f"{v['calibration_error']:.4f}",
+                "Brier Score":      f"{v['brier_score']:.4f}",
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
-            # Accuracy vs predicted bar chart
-            if len(tiers) >= 2:
-                tier_names = list(tiers.keys())
-                actual_acc = [tiers[t]["accuracy"]  for t in tier_names]
-                pred_acc   = [tiers[t]["avg_pred"]  for t in tier_names]
+        tnames = list(tiers.keys())
+        fig = go.Figure()
+        fig.add_bar(name="Actually Scored %", x=tnames,
+                    y=[tiers[t]["accuracy"] for t in tnames],
+                    marker_color="#27ae60",
+                    text=[f"{tiers[t]['accuracy']:.1%}" for t in tnames],
+                    textposition="outside")
+        fig.add_bar(name="We Predicted %", x=tnames,
+                    y=[tiers[t]["avg_predicted"] for t in tnames],
+                    marker_color="#3498db",
+                    text=[f"{tiers[t]['avg_predicted']:.1%}" for t in tnames],
+                    textposition="outside")
+        fig.update_layout(
+            title="Predicted vs Actual Goal Rate by Tier",
+            barmode="group", height=320,
+            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#e8ecf4"),
+            yaxis=dict(tickformat=".0%"))
+        st.plotly_chart(fig, use_container_width=True)
 
-                fig = go.Figure()
-                fig.add_bar(name="Actual Accuracy", x=tier_names, y=actual_acc,
-                            marker_color="#27ae60",
-                            text=[f"{v:.1%}" for v in actual_acc],
-                            textposition="outside")
-                fig.add_bar(name="Avg Predicted Prob", x=tier_names, y=pred_acc,
-                            marker_color="#3498db",
-                            text=[f"{v:.1%}" for v in pred_acc],
-                            textposition="outside")
-                fig.update_layout(
-                    title="Predicted vs Actual Goal Probability by Tier",
-                    barmode="group", height=350,
-                    plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-                    font=dict(color="#e8ecf4"),
-                    yaxis=dict(tickformat=".0%"),
-                )
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Not enough data yet for NHL tier breakdown.")
+    cal = agg.get("calibration_curve", [])
+    if len(cal) >= 3:
+        df_cal = pd.DataFrame(cal)
+        fig2 = go.Figure()
+        fig2.add_scatter(x=df_cal["avg_predicted"], y=df_cal["avg_actual"],
+                         mode="lines+markers", name="Model",
+                         marker=dict(size=8, color="#e67e22"),
+                         text=[f"n={r['n']}<br>{r['bucket']}" for _,r in df_cal.iterrows()],
+                         line=dict(color="#e67e22", width=2))
+        fig2.add_scatter(x=[0,1], y=[0,1], mode="lines",
+                         name="Perfect (predicted = actual)",
+                         line=dict(color="#27ae60", dash="dash"))
+        fig2.update_layout(
+            title="Calibration Curve — dots on the line = perfectly calibrated",
+            height=320, plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#e8ecf4"),
+            xaxis=dict(title="What we predicted", tickformat=".0%"),
+            yaxis=dict(title="What actually happened", tickformat=".0%"))
+        st.plotly_chart(fig2, use_container_width=True)
 
-    # ── MLB Results ────────────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("### ⚾ MLB — Batter Projection Accuracy")
 
-    mlb = results.get("mlb", {})
-    if mlb.get("message") or mlb.get("error"):
-        st.info(mlb.get("message") or mlb.get("error"))
-    else:
-        agg = mlb.get("aggregate", {})
-        tiers = agg.get("tiers", {})
+def _render_mlb(mlb: dict):
+    agg, files, failures, n_rows, msg = _status_check(mlb)
 
-        if tiers:
-            st.metric("Games Analysed", agg.get("n_games","—"))
+    if files == 0:
+        st.info("No history snapshots yet."); return
+    if n_rows == 0:
+        st.warning(f"Found {files} history file(s) but 0 players matched. "
+                   f"API failures: {failures}/{files}. "
+                   "Try: `python scripts/backtest.py --days 7` in the terminal.")
+        if msg: st.caption(msg)
+        return
 
-            tier_rows = []
-            for conf, t in tiers.items():
-                tier_rows.append({
-                    "Tier":          conf,
-                    "Picks":         t["n"],
-                    "MAE Hits":      t["mae_hits"],
-                    "MAE H+R+RBI":   t["mae_hrr"],
-                    "Avg Pred H":    t["avg_pred_hits"],
-                    "Avg Actual H":  t["avg_actual_hits"],
-                    "Avg Pred HRR":  t["avg_pred_hrr"],
-                    "Avg Actual HRR":t["avg_actual_hrr"],
-                    "HR Dir. Acc":   f"{t['hr_pred_correct']:.1%}",
-                })
-            st.dataframe(pd.DataFrame(tier_rows), use_container_width=True,
-                         hide_index=True)
+    st.caption(f"Based on {files} days · {n_rows} player-games")
+    if msg: st.info(msg)
 
-            # Pred vs actual hits chart
-            tier_names = list(tiers.keys())
-            pred_h   = [tiers[t]["avg_pred_hits"]   for t in tier_names]
-            actual_h = [tiers[t]["avg_actual_hits"]  for t in tier_names]
+    # Stat accuracy table
+    stats = agg.get("stats", {})
+    if stats:
+        st.markdown("**Projection accuracy (how many off on average):**")
+        rows = []
+        for label, v in stats.items():
+            mae  = v.get("mae",  0)
+            bias = v.get("bias", 0)
+            rows.append({
+                "Stat":             label,
+                "Avg Error (MAE)":  f"±{mae:.3f}",
+                "Bias":             f"{'Over' if bias>0.05 else 'Under' if bias<-0.05 else 'On target'} ({bias:+.3f})",
+                "Avg Predicted":    f"{v.get('avg_pred',0):.3f}",
+                "Avg Actual":       f"{v.get('avg_actual',0):.3f}",
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
-            fig2 = go.Figure()
-            fig2.add_bar(name="Predicted Hits", x=tier_names, y=pred_h,
-                         marker_color="#27ae60",
-                         text=[f"{v:.2f}" for v in pred_h],
-                         textposition="outside")
-            fig2.add_bar(name="Actual Hits", x=tier_names, y=actual_h,
-                         marker_color="#e67e22",
-                         text=[f"{v:.2f}" for v in actual_h],
-                         textposition="outside")
-            fig2.update_layout(
-                title="Predicted vs Actual Hits by Tier",
-                barmode="group", height=350,
-                plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-                font=dict(color="#e8ecf4"),
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-        else:
-            st.info("Not enough data yet for MLB tier breakdown.")
+    c1,c2,c3 = st.columns(3)
+    if agg.get("hr_direction_accuracy"):
+        _metric(c1, "HR Direction Accuracy",
+                f"{agg['hr_direction_accuracy']:.1%}",
+                help="% of time we correctly predicted HR vs no HR")
+    if agg.get("hr_brier"):
+        _metric(c2, "HR Probability Quality",
+                f"{agg['hr_brier']:.4f}",
+                help="Brier score for HR probability. Lower=better")
 
-    # ── Methodology note ───────────────────────────────────────────────────────
-    st.divider()
-    with st.expander("📖 Methodology"):
-        st.markdown("""
-        **How results are computed:**
-        
-        - Each day the warm_cache workflow saves a snapshot of predictions to `data/cache/predictions/history/`
-        - The backtest fetches actual results from the NHL and MLB APIs for those dates
-        - Results are matched on player ID and grouped by confidence tier
-        
-        **NHL metrics:**
-        - **Accuracy:** % of players in each tier who actually scored a goal
-        - **Calibration error:** |actual accuracy − average predicted probability| (lower = better)
-        - **Brier score:** Mean squared error of probability predictions (lower = better, 0.25 = random)
-        - **Elite ROI:** Simulated return betting $1 on every Elite pick at +150 odds
-        
-        **MLB metrics:**
-        - **MAE Hits:** Mean absolute error on projected hits
-        - **MAE H+R+RBI:** Mean absolute error on the H+R+RBI combined stat
-        - **HR Direction Accuracy:** % of time the model correctly predicted HR vs no HR
-        
-        **Important caveats:**
-        - Results accumulate over time — more days = more reliable estimates
-        - Small samples (< 50 picks per tier) should be treated cautiously
-        - The ROI estimate assumes +150 odds which is illustrative, not exact
-        - Past accuracy does not guarantee future performance
-        """)
+    tiers = agg.get("tiers", {})
+    if tiers:
+        st.markdown("**By confidence tier (hit predictions):**")
+        rows = []
+        for t, v in tiers.items():
+            rows.append({
+                "Tier":          t,
+                "Picks":         v["n"],
+                "Avg Hit Error": f"±{v.get('mae',0):.3f}",
+                "Bias":          f"{v.get('bias',0):+.3f}",
+                "Avg Pred Hits": f"{v.get('avg_predicted',0):.3f}",
+                "Avg Actual H":  f"{v.get('avg_actual',0):.3f}",
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+    cal = agg.get("calibration_curve", [])
+    if len(cal) >= 2:
+        df_cal = pd.DataFrame(cal)
+        fig = go.Figure()
+        fig.add_bar(name="Predicted Hits", x=df_cal["bucket"],
+                    y=df_cal["avg_predicted"], marker_color="#27ae60")
+        fig.add_bar(name="Actual Hits", x=df_cal["bucket"],
+                    y=df_cal["avg_actual"], marker_color="#e67e22")
+        fig.update_layout(
+            title="Hit Projection Accuracy by Bucket",
+            barmode="group", height=300,
+            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#e8ecf4"))
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_nba(nba: dict):
+    agg, files, failures, n_rows, msg = _status_check(nba)
+
+    if files == 0:
+        st.info("No history snapshots yet."); return
+    if n_rows == 0:
+        st.warning(f"Found {files} history file(s) but 0 players matched. "
+                   f"API failures: {failures}/{files}.")
+        if msg: st.caption(msg)
+        return
+
+    st.caption(f"Based on {files} days · {n_rows} player-games")
+
+    stats = agg.get("stats", {})
+    if stats:
+        st.markdown("**Projection accuracy (how many off on average):**")
+        rows = []
+        for label, v in stats.items():
+            mae  = v.get("mae",  0)
+            bias = v.get("bias", 0)
+            rows.append({
+                "Stat":          label,
+                "Avg Error":     f"±{mae:.2f}",
+                "Bias":          f"{'Over' if bias>1 else 'Under' if bias<-1 else 'On target'} ({bias:+.2f})",
+                "Avg Predicted": f"{v.get('avg_pred',0):.1f}",
+                "Avg Actual":    f"{v.get('avg_actual',0):.1f}",
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+    c1,c2 = st.columns(2)
+    if agg.get("dd_accuracy"):
+        _metric(c1, "Double-Double Accuracy",
+                f"{agg['dd_accuracy']:.1%}",
+                help="% of time we correctly predicted DD vs no DD")
+    if agg.get("dd_brier"):
+        _metric(c2, "DD Probability Quality",
+                f"{agg['dd_brier']:.4f}",
+                help="Lower=better, 0.25=random guessing")
+
+    tiers = agg.get("tiers", {})
+    if tiers:
+        st.markdown("**By confidence tier (points predictions):**")
+        rows = []
+        for t, v in tiers.items():
+            rows.append({
+                "Tier":          t,
+                "Picks":         v["n"],
+                "Avg Pts Error": f"±{v.get('mae',0):.1f}",
+                "Avg Pred Pts":  f"{v.get('avg_predicted',0):.1f}",
+                "Avg Actual Pts":f"{v.get('avg_actual',0):.1f}",
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)

@@ -938,11 +938,52 @@ class MLBPipeline:
 
                         row[f"proj_{mname}"] = round(max(0.0, blended), 3)
 
-                    hp = row.get("proj_hit", 0.5)
+                    hp   = row.get("proj_hit", 0.5)
+                    hits = row.get("proj_hits", 0)
+                    hr   = row.get("proj_hr",   0)
+                    rbi  = row.get("proj_rbi",  0)
+                    r    = row.get("proj_runs", 0)
+                    tb   = row.get("proj_tb",   0)
+                    hrr  = row.get("proj_hrr",  0)
+                    k    = row.get("proj_k",    0)
+
+                    # Overall confidence (based on hit probability)
                     row["confidence"] = (
                         "Elite"  if hp >= MLB_CONF_ELITE  else
                         "High"   if hp >= MLB_CONF_HIGH   else
                         "Medium" if hp >= MLB_CONF_MEDIUM else "Low"
+                    )
+                    # Per-category confidence — stored in parquet, no recalc needed in UI
+                    row["conf_hits"] = (
+                        "Elite"  if hits >= 1.10 else
+                        "High"   if hits >= 0.85 else
+                        "Medium" if hits >= 0.60 else "Low"
+                    )
+
+                    row["conf_rbi"] = (
+                        "Elite"  if rbi >= 1.20 else
+                        "High"   if rbi >= 0.80 else
+                        "Medium" if rbi >= 0.50 else "Low"
+                    )
+                    row["conf_runs"] = (
+                        "Elite"  if r   >= 1.10 else
+                        "High"   if r   >= 0.75 else
+                        "Medium" if r   >= 0.50 else "Low"
+                    )
+                    row["conf_hrr"] = (
+                        "Elite"  if hrr >= 2.80 else
+                        "High"   if hrr >= 2.00 else
+                        "Medium" if hrr >= 1.40 else "Low"
+                    )
+                    row["conf_tb"] = (
+                        "Elite"  if tb  >= 3.00 else
+                        "High"   if tb  >= 2.00 else
+                        "Medium" if tb  >= 1.20 else "Low"
+                    )
+                    row["conf_k"] = (
+                        "Elite"  if k   >= 1.40 else
+                        "High"   if k   >= 1.00 else
+                        "Medium" if k   >= 0.65 else "Low"
                     )
                     # H+R+RBI combined — standard DraftKings/FanDuel betting category
                     row["proj_hrr"] = round(
@@ -962,11 +1003,7 @@ class MLBPipeline:
                     k   = row.get("proj_k",    0)
 
                     # HR confidence: based on HR probability vs league avg 0.107/game
-                    row["conf_hr"] = (
-                        "Elite"  if hr  >= 0.40 else
-                        "High"   if hr  >= 0.25 else
-                        "Medium" if hr  >= 0.12 else "Low"
-                    )
+
                     # RBI confidence
                     row["conf_rbi"] = (
                         "Elite"  if rbi >= 1.20 else
@@ -986,7 +1023,7 @@ class MLBPipeline:
                         "Medium" if hrr >= 1.40 else "Low"
                     )
                     # Hits confidence (same as overall but explicit)
-                    row["conf_hits"] = row["confidence"]
+
                     # Strikeout confidence (for pitcher props)
                     row["conf_k"] = (
                         "Elite"  if k   >= 1.40 else

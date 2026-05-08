@@ -104,23 +104,20 @@ class GoalscorerModel:
         prediction_df["goal_probability"] = np.round(final_probs, 4)
         prediction_df["prob_ceiling"]     = np.round(ceiling_arr, 4)
 
-        def _conf(p):
-            if p >= 0.32: return "Elite"
-            if p >= 0.22: return "High"
-            if p >= 0.14: return "Medium"
-            return "Low"
+        conf_labels = pd.cut(
+            final_probs,
+            bins  = [-np.inf, 0.14, 0.22, 0.32, np.inf],
+            labels= ["Low", "Medium", "High", "Elite"]
+        ).astype(str)
+        prediction_df["confidence"] = conf_labels
+        prediction_df["conf_goals"] = conf_labels
 
-        prediction_df["confidence"]  = prediction_df["goal_probability"].apply(_conf)
-        prediction_df["conf_goals"]  = prediction_df["confidence"]  # alias
-
-        # SOG per-category confidence
-        def _conf_sog(s):
-            if s >= 4.0: return "Elite"
-            if s >= 3.0: return "High"
-            if s >= 2.0: return "Medium"
-            return "Low"
         if "projected_sog" in prediction_df.columns:
-            prediction_df["conf_sog"] = prediction_df["projected_sog"].apply(_conf_sog)
+            prediction_df["conf_sog"] = pd.cut(
+                prediction_df["projected_sog"].fillna(0).values,
+                bins  = [-np.inf, 2.0, 3.0, 4.0, np.inf],
+                labels= ["Low", "Medium", "High", "Elite"]
+            ).astype(str)
         else:
             prediction_df["conf_sog"] = "Low"
 

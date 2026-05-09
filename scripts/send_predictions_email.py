@@ -41,7 +41,11 @@ def load(sport: str) -> dict:
         ]:
             f = PRED_DIR / fname
             if f.exists():
-                out[key] = loader(f)
+                loaded = loader(f)
+                # Remove duplicate columns (can occur across pipeline versions)
+                if hasattr(loaded, "columns"):
+                    loaded = loaded.loc[:, ~loaded.columns.duplicated()]
+                out[key] = loaded
         for key, fname in [
             ("game_projections", f"{sport}_game_projections.json"),
             ("games",            f"{sport}_games.json"),
@@ -261,6 +265,25 @@ def mlb_section(data: dict) -> str:
     if df.empty:
         return html + no_data("No MLB data available.")
 
+    # Thresholds per conf column — always compute fresh, never trust stored values
+    # (avoids issues with stale parquets, duplicate columns, wrong stored values)
+    _THRESHOLDS = {
+        "conf_hrr":  [(2.80,"Elite"),(2.00,"High"),(1.40,"Medium")],
+        "conf_hits": [(1.10,"Elite"),(0.85,"High"),(0.60,"Medium")],
+        "conf_hr":   [(0.40,"Elite"),(0.25,"High"),(0.12,"Medium")],
+        "conf_rbi":  [(1.20,"Elite"),(0.80,"High"),(0.50,"Medium")],
+        "conf_runs": [(1.10,"Elite"),(0.75,"High"),(0.50,"Medium")],
+        "conf_tb":   [(3.00,"Elite"),(2.00,"High"),(1.20,"Medium")],
+    }
+    def _get_conf(r, conf_col, sort_col):
+        # Always compute from the sort value — stored conf columns may be
+        # stale, missing, or based on wrong metric (e.g. conf_hr absent,
+        # overall 'confidence' is hit-probability-based not HR-based)
+        sv = float(r.get(sort_col, 0))
+        for cutoff, label in _THRESHOLDS.get(conf_col, []):
+            if sv >= cutoff: return label
+        return "Low"
+
     def _cat(title, sort_col, conf_col, val_label, val_fmt, color):
         if sort_col not in df.columns: return ""
         top = df.sort_values(sort_col, ascending=False).head(TOP_CAT)
@@ -270,7 +293,7 @@ def mlb_section(data: dict) -> str:
         h += table_header("#","Player","Team","Opp",val_label,"Conf","BvP")
         for i,(_, r) in enumerate(top.iterrows(),1):
             val  = float(r.get(sort_col, 0))
-            conf = str(r.get(conf_col, r.get("confidence","Low")))
+            conf = _get_conf(r, conf_col, sort_col)
             cc   = "#c0392b" if conf=="Elite" else "#e67e22" if conf=="High" else "#2980b9"
             bvp  = int(r.get("bvp_ab",0)); bvp_hr = int(r.get("bvp_hr",0))
             bvp_s= f"{bvp}AB {bvp_hr}HR" if bvp>=5 else "—"

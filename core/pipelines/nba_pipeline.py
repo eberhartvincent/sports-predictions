@@ -234,20 +234,34 @@ class NBAPipeline:
     def fetch_game_logs(self) -> pd.DataFrame:
         if self._rosters.empty:
             return pd.DataFrame()
-        pids   = self._rosters["player_id"].dropna().astype(int).unique().tolist()
-        _p(f"Fetching logs for {len(pids)} players …")
+        pids = self._rosters["player_id"].dropna().astype(int).unique().tolist()
+
+        # Fetch current + 2 prior seasons for richer model training
+        def _prev_nba(s: str) -> str:
+            start = int(s.split("-")[0]) - 1
+            return f"{start}-{str(start+1)[2:]}"
+
+        seasons_to_fetch = [CURRENT_SEASON,
+                            _prev_nba(CURRENT_SEASON),
+                            _prev_nba(_prev_nba(CURRENT_SEASON))]
+        _p(f"Fetching logs for {len(pids)} players across seasons {seasons_to_fetch} …")
+
         frames = []
         for pid in pids:
-            try:
-                df = get_nba_player_gamelog(pid, CURRENT_SEASON)
-                if not df.empty:
-                    frames.append(df)
-            except Exception:
-                pass
-            time.sleep(0.6)
+            for szn in seasons_to_fetch:
+                try:
+                    df = get_nba_player_gamelog(pid, szn)
+                    if not df.empty:
+                        df["season"] = szn
+                        frames.append(df)
+                except Exception:
+                    pass
+                time.sleep(0.6)
+
         if frames:
-            self._all_logs = pd.concat(frames, ignore_index=True)
-            self._all_logs["min"] = _parse_min_col(self._all_logs["min"])
+            combined = pd.concat(frames, ignore_index=True)
+            combined["min"] = _parse_min_col(combined["min"])
+            self._all_logs = combined
         else:
             self._all_logs = pd.DataFrame()
         _p(f"Total log rows: {len(self._all_logs)}")

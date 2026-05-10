@@ -231,20 +231,36 @@ def _parse_toi(toi_str: str) -> float:
 
 def fetch_all_game_logs(player_ids: list[int],
                          season: str = CURRENT_SEASON,
+                         prior_seasons: int = 2,
                          delay: float = 0.25) -> pd.DataFrame:
     """
     Fetch game logs for a list of player IDs.
+    Includes current season + prior seasons for richer model training.
+    More data = better separation of true scorers from small-sample noise.
     Returns combined DataFrame sorted by player and date.
     """
+    # Build list of seasons to fetch: current + N prior
+    def _prev(s: str) -> str:
+        start = int(s[:4]) - 1
+        return f"{start}{start+1}"
+
+    seasons_to_fetch = [season]
+    s = season
+    for _ in range(prior_seasons):
+        s = _prev(s)
+        seasons_to_fetch.append(s)
+
     frames = []
     for pid in player_ids:
-        try:
-            df = get_player_game_log(pid, season)
-            if not df.empty:
-                frames.append(df)
-        except Exception as e:
-            print(f"[GameLog] Player {pid} error: {e}")
-        time.sleep(delay)
+        for szn in seasons_to_fetch:
+            try:
+                df = get_player_game_log(pid, szn)
+                if not df.empty:
+                    df["season"] = szn  # track which season each row is from
+                    frames.append(df)
+            except Exception as e:
+                print(f"[GameLog] Player {pid} season {szn} error: {e}")
+            time.sleep(delay)
 
     if frames:
         combined = pd.concat(frames, ignore_index=True)

@@ -428,16 +428,22 @@ class MLBPipeline:
             return pd.DataFrame()
         batters = self._rosters[~self._rosters["position"].isin(["P","SP","RP"])]
         pids    = batters["player_id"].dropna().astype(int).unique().tolist()
-        _p(f"Fetching logs for {len(pids)} batters (season {SEASON}) …")
+
+        # Fetch current + 2 prior seasons for richer model training
+        seasons_to_fetch = [SEASON, str(int(SEASON)-1), str(int(SEASON)-2)]
+        _p(f"Fetching logs for {len(pids)} batters across seasons {seasons_to_fetch} …")
+
         frames = []
         for pid in pids:
-            try:
-                df = get_mlb_player_gamelog(pid, SEASON)
-                if not df.empty:
-                    frames.append(df)
-            except Exception:
-                pass
-            time.sleep(MLB_REQUEST_DELAY)
+            for szn in seasons_to_fetch:
+                try:
+                    df = get_mlb_player_gamelog(pid, szn)
+                    if not df.empty:
+                        df["season"] = szn
+                        frames.append(df)
+                except Exception:
+                    pass
+                time.sleep(MLB_REQUEST_DELAY)
 
         if frames:
             self._all_logs = (pd.concat(frames, ignore_index=True)
@@ -447,8 +453,6 @@ class MLBPipeline:
             self._all_logs = pd.DataFrame()
 
         rows_per_player = len(self._all_logs) / max(len(pids), 1)
-        # Drop MIN_GP to 3 when average player has fewer than 15 games logged.
-        # This handles the first 2-3 weeks of the season gracefully.
         self._effective_min_gp = 3 if rows_per_player < 15 else MIN_GP
         _p(f"Total log rows: {len(self._all_logs)} | effective MIN_GP: {self._effective_min_gp}")
         return self._all_logs

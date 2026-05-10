@@ -1,582 +1,530 @@
 """
-nhl_api.py — Fetches data from the free NHL API (api-web.nhle.com)
+data/api/nhl_api.py — NHL data via ESPN public API.
 
-Endpoints used:
-  /v1/schedule/today              → today's games
-  /v1/schedule/{date}             → games on a specific date
-  /v1/roster/{team}/current       → team rosters
-  /v1/player/{id}/game-log/{season}/{gameType}
-                                  → per-game stats for a player
-  /v1/skater-stats-leaders/current → league stat leaders
+Uses the same ESPN endpoint pattern as nba_client.py since
+the official NHL API (api-web.nhle.com) blocks cloud/datacenter IPs.
+
+ESPN NHL endpoints (all public, no auth required):
+  Scoreboard:  site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard
+  Summary:     site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={id}
+  Roster:      site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/{id}/roster
+  Teams:       site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams
+
+Fallback: if ESPN returns 403, tries the NHL CDN (content.nhl.com) which
+serves static JSON files and is less aggressively rate-limited.
 """
 
-import requests
 import json
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Optional
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
 
-from config import NHL_API_BASE, REQUEST_HEADERS, CACHE_DIR, CURRENT_SEASON, SEASON_TYPE
+from config import (
+    NHL_CACHE_DIR, REQUEST_HEADERS, CURRENT_SEASON, MIN_GP,
+    NHL_CONF_ELITE, NHL_CONF_HIGH, NHL_CONF_MEDIUM,
+)
 
-os.makedirs(CACHE_DIR, exist_ok=True)
+ET         = ZoneInfo("America/New_York")
+CACHE_DIR  = Path(NHL_CACHE_DIR)
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+ESPN_NHL   = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl"
+CDN_NHL    = "https://api-web.nhle.com/v1"   # kept as fallback where not blocked
 
-# ── Low-level helpers ─────────────────────────────────────────────────────────
-
-def _get(endpoint: str, params: dict = None, retries: int = 3) -> dict:
-    """GET wrapper with basic retry logic."""
-    url = f"{NHL_API_BASE}{endpoint}"
-    for attempt in range(retries):
-        try:
-            resp = requests.get(url, params=params, headers=REQUEST_HEADERS, timeout=15)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            if attempt == retries - 1:
-                print(f"[NHL API] Failed: {url} → {e}")
-                return {}
-            time.sleep(2 ** attempt)
-    return {}
-
-
-def _cache_path(name: str) -> str:
-    return os.path.join(CACHE_DIR, f"{name}.json")
+HEADERS = {
+    "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/124.0.0.0 Safari/537.36",
+    "Accept":          "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer":         "https://www.espn.com/nhl/",
+    "Origin":          "https://www.espn.com",
+}
+DELAY = 0.3
 
 
-def _save_cache(name: str, data) -> None:
-    with open(_cache_path(name), "w") as f:
-        json.dump(data, f)
+# ── Cache helpers ─────────────────────────────────────────────────────────────
+
+def _cache_path(key: str) -> Path:
+    return CACHE_DIR / f"{key}.json"
 
 
-def _load_cache(name: str, max_age_minutes: int = 30) -> Optional[dict]:
-    path = _cache_path(name)
-    if not os.path.exists(path):
+def _load_cache(key: str, max_age_minutes: int = 60):
+    p = _cache_path(key)
+    if not p.exists():
         return None
-    age = (time.time() - os.path.getmtime(path)) / 60
+    age = (datetime.now() - datetime.fromtimestamp(p.stat().st_mtime)).seconds / 60
     if age > max_age_minutes:
         return None
-    with open(path) as f:
-        return json.load(f)
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+def _save_cache(key: str, data):
+    try:
+        _cache_path(key).write_text(json.dumps(data, default=str))
+    except Exception:
+        pass
+
+
+def _get_espn(endpoint: str, params: dict = None) -> dict:
+    """GET from ESPN NHL API with caching."""
+    cache_key = f"espn_{endpoint.replace('/', '_')}_{json.dumps(params or {}, sort_keys=True)}"
+    cached = _load_cache(cache_key, max_age_minutes=30)
+    if cached is not None:
+        return cached
+
+    url = f"{ESPN_NHL}/{endpoint.lstrip('/')}"
+    try:
+        time.sleep(DELAY)
+        r = requests.get(url, params=params, headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            _save_cache(cache_key, data)
+            return data
+        print(f"  [NHL/ESPN] {r.status_code}: {url}")
+        return {}
+    except Exception as e:
+        print(f"  [NHL/ESPN] Error: {e}")
+        return {}
+
+
+def _get_cdn(endpoint: str) -> dict:
+    """GET from NHL CDN (fallback, not always blocked)."""
+    cache_key = f"cdn_{endpoint.replace('/', '_')}"
+    cached = _load_cache(cache_key, max_age_minutes=30)
+    if cached is not None:
+        return cached
+
+    url = f"{CDN_NHL}/{endpoint.lstrip('/')}"
+    try:
+        time.sleep(DELAY)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            _save_cache(cache_key, data)
+            return data
+        return {}
+    except Exception:
+        return {}
 
 
 # ── Schedule ──────────────────────────────────────────────────────────────────
 
-def get_today_schedule() -> list[dict]:
-    """Return list of games scheduled for today."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    cache_key = f"schedule_{today}"
-    cached = _load_cache(cache_key, max_age_minutes=60)
-    if cached:
+def get_nhl_schedule(date_str: str) -> list:
+    """
+    Return list of games for a given date.
+    Each game: {game_id, home_team, away_team, home_abbrev, away_abbrev,
+                game_time, status, home_score, away_score}
+    """
+    cached = _load_cache(f"schedule_{date_str}", 60)
+    if cached is not None:
         return cached
 
-    # Fetch by explicit date — more reliable than /schedule/now
-    data = _get(f"/schedule/{today}")
-    games = _parse_schedule(data)
-
-    # If nothing returned, also try /schedule/now as fallback
-    if not games:
-        data = _get("/schedule/now")
-        games = _parse_schedule(data)
-
-    print(f"  [Schedule] Fetched {len(games)} games for {today}")
-    for g in games:
-        print(f"    {g['date']} | {g['away_team']} @ {g['home_team']} | status={g['status']}")
-
-    _save_cache(cache_key, games)
-    return games
-
-
-def get_schedule_for_date(date_str: str) -> list[dict]:
-    """Return list of games for a specific date (YYYY-MM-DD)."""
-    cache_key = f"schedule_{date_str}"
-    cached = _load_cache(cache_key, max_age_minutes=1440)
-    if cached:
-        return cached
-
-    data = _get(f"/schedule/{date_str}")
-    games = _parse_schedule(data)
-    _save_cache(cache_key, games)
-    return games
-
-
-def _parse_schedule(data: dict) -> list[dict]:
-    """Parse the raw schedule payload into a flat list of game dicts."""
+    # ESPN scoreboard
+    date_fmt = date_str.replace("-", "")
+    data = _get_espn("scoreboard", {"dates": date_fmt, "limit": 20})
     games = []
-    for week in data.get("gameWeek", []):
-        week_date = week.get("date", "")
-        for game in week.get("games", []):
-            away = game.get("awayTeam", {})
-            home = game.get("homeTeam", {})
+    for event in data.get("events", []):
+        comp = event.get("competitions", [{}])[0]
+        competitors = comp.get("competitors", [])
+        if len(competitors) < 2:
+            continue
+        home = next((c for c in competitors if c.get("homeAway")=="home"), competitors[0])
+        away = next((c for c in competitors if c.get("homeAway")=="away"), competitors[1])
+        games.append({
+            "game_id":     event.get("id"),
+            "home_team":   home.get("team",{}).get("displayName",""),
+            "away_team":   away.get("team",{}).get("displayName",""),
+            "home_abbrev": home.get("team",{}).get("abbreviation",""),
+            "away_abbrev": away.get("team",{}).get("abbreviation",""),
+            "home_id":     home.get("team",{}).get("id",""),
+            "away_id":     away.get("team",{}).get("id",""),
+            "game_time":   event.get("date",""),
+            "status":      event.get("status",{}).get("type",{}).get("name",""),
+            "home_score":  int(home.get("score",0) or 0),
+            "away_score":  int(away.get("score",0) or 0),
+        })
 
-            # Try every possible location for the date
-            game_date = (
-                game.get("gameDate")
-                or week_date
-                or str(game.get("startTimeUTC", ""))[:10]
-                or ""
-            )
-            # startTimeUTC looks like "2026-03-07T23:00:00Z" — grab first 10 chars
-            if not game_date or game_date == "None":
-                utc = str(game.get("startTimeUTC", ""))
-                game_date = utc[:10] if len(utc) >= 10 else ""
-
-            games.append({
-                "game_id":        game.get("id"),
-                "date":           game_date,
-                "status":         game.get("gameState"),
-                "away_team":      away.get("abbrev"),
-                "away_team_name": away.get("commonName", {}).get("default", ""),
-                "home_team":      home.get("abbrev"),
-                "home_team_name": home.get("commonName", {}).get("default", ""),
-                "venue":          game.get("venue", {}).get("default", ""),
-                "start_time_utc": game.get("startTimeUTC", ""),
-            })
+    _save_cache(f"schedule_{date_str}", games)
     return games
 
 
 # ── Rosters ───────────────────────────────────────────────────────────────────
 
-def get_team_roster(team_abbrev: str) -> pd.DataFrame:
-    """Return current roster for a team as a DataFrame."""
-    cache_key = f"roster_{team_abbrev}"
-    cached = _load_cache(cache_key, max_age_minutes=120)
+def _get_espn_teams() -> list:
+    """Return list of {id, abbreviation, displayName} for all NHL teams."""
+    cached = _load_cache("nhl_teams", 60 * 24)
+    if cached:
+        return cached
+    data = _get_espn("teams", {"limit": 40})
+    teams = []
+    for t in data.get("sports",[{}])[0].get("leagues",[{}])[0].get("teams",[]):
+        team = t.get("team", {})
+        teams.append({
+            "id":           team.get("id"),
+            "abbreviation": team.get("abbreviation"),
+            "displayName":  team.get("displayName"),
+        })
+    _save_cache("nhl_teams", teams)
+    return teams
+
+
+def get_nhl_roster(team_abbrev: str) -> pd.DataFrame:
+    """
+    Fetch roster for a team by abbreviation.
+    Returns DataFrame with player_id, player_name, position, team.
+    """
+    cached = _load_cache(f"roster_{team_abbrev}", 60 * 6)
     if cached:
         return pd.DataFrame(cached)
 
-    data = _get(f"/roster/{team_abbrev}/current")
-    players = []
-    for group in ("forwards", "defensemen"):
-        for p in data.get(group, []):
-            players.append({
-                "player_id":   p.get("id"),
-                "player_name": f"{p.get('firstName',{}).get('default','')} {p.get('lastName',{}).get('default','')}",
-                "position":    p.get("positionCode"),
-                "sweater_number": p.get("sweaterNumber"),
-                "team":        team_abbrev,
-            })
+    # Find team ESPN ID
+    teams = _get_espn_teams()
+    team_info = next((t for t in teams
+                      if t.get("abbreviation","").upper() == team_abbrev.upper()), None)
+    if not team_info:
+        return pd.DataFrame()
 
-    _save_cache(cache_key, players)
-    return pd.DataFrame(players)
+    team_id = team_info["id"]
+    data = _get_espn(f"teams/{team_id}/roster")
+    rows = []
+    for group in data.get("athletes", []):
+        for player in (group.get("items", []) if isinstance(group, dict) else [group]):
+            pid  = player.get("id")
+            name = player.get("fullName", player.get("displayName",""))
+            pos  = player.get("position",{}).get("abbreviation","")
+            if pid and name:
+                rows.append({
+                    "player_id":   int(pid),
+                    "player_name": name,
+                    "position":    pos,
+                    "team":        team_abbrev.upper(),
+                })
+
+    _save_cache(f"roster_{team_abbrev}", rows)
+    return pd.DataFrame(rows)
 
 
-def get_all_rosters(team_list: list[str]) -> pd.DataFrame:
-    """Fetch rosters for all given teams and concatenate."""
+def get_all_rosters(teams: list = None) -> pd.DataFrame:
+    """Fetch rosters for all teams playing today."""
+    if not teams:
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        games = get_nhl_schedule(today)
+        teams = list({g["home_abbrev"] for g in games} |
+                     {g["away_abbrev"] for g in games})
+
     frames = []
-    for team in team_list:
-        try:
-            df = get_team_roster(team)
-            if not df.empty:
-                frames.append(df)
-            time.sleep(0.3)
-        except Exception as e:
-            print(f"[Roster] Could not fetch {team}: {e}")
-    if frames:
-        return pd.concat(frames, ignore_index=True)
-    return pd.DataFrame()
+    for abbrev in teams:
+        df = get_nhl_roster(abbrev)
+        if not df.empty:
+            frames.append(df)
+        time.sleep(DELAY)
+
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-# ── Player Game Logs ──────────────────────────────────────────────────────────
+# ── Game logs ─────────────────────────────────────────────────────────────────
 
-def get_player_game_log(player_id: int, season: str = CURRENT_SEASON,
-                         game_type: int = SEASON_TYPE) -> pd.DataFrame:
+def _espn_player_gamelog(player_id: int, season_year: int) -> pd.DataFrame:
     """
-    Fetch per-game stats for a player for the given season.
-    Returns a DataFrame with one row per game.
+    Fetch per-game stats for one player via ESPN.
+    season_year = the year the season ENDS (e.g. 2026 for 2025-26).
     """
-    cache_key = f"gamelog_{player_id}_{season}_{game_type}"
-    cached = _load_cache(cache_key, max_age_minutes=120)
+    cache_key = f"gamelog_espn_{player_id}_{season_year}"
+    cached = _load_cache(cache_key, 60 * 4)
     if cached:
         return pd.DataFrame(cached)
 
-    data = _get(f"/player/{player_id}/game-log/{season}/{game_type}")
+    url = (f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl"
+           f"/athletes/{player_id}/gamelog")
+    try:
+        time.sleep(DELAY)
+        r = requests.get(url, params={"season": season_year},
+                         headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return pd.DataFrame()
+
+        data = r.json()
+        rows = []
+        events   = data.get("events",{})
+        stat_map = {e["id"]: e for e in events.get("previousEvents",
+                    events.get("events", []))}
+
+        for cat in data.get("seasonTypes", []):
+            for entry in cat.get("categories", []):
+                for ev in entry.get("events", []):
+                    eid   = ev.get("eventId","")
+                    stats = ev.get("stats",[])
+                    info  = stat_map.get(eid,{})
+                    date  = info.get("date","")[:10] if info else ""
+                    if not date or not stats:
+                        continue
+                    # ESPN NHL gamelog stat order:
+                    # G, A, PTS, +/-, PIM, EVG, PPG, SHG, GWG, EVA, PPA, SHA, S, S%
+                    try:
+                        rows.append({
+                            "player_id":  player_id,
+                            "game_date":  date,
+                            "goals":      int(float(stats[0])) if len(stats)>0 else 0,
+                            "assists":    int(float(stats[1])) if len(stats)>1 else 0,
+                            "points":     int(float(stats[2])) if len(stats)>2 else 0,
+                            "plus_minus": int(float(stats[3])) if len(stats)>3 else 0,
+                            "shots":      int(float(stats[12])) if len(stats)>12 else 0,
+                            "toi_seconds":0,  # ESPN doesn't give TOI in gamelog
+                            "home_road":  "H",
+                            "opponent":   "",
+                        })
+                    except (ValueError, IndexError):
+                        continue
+
+        _save_cache(cache_key, rows)
+        return pd.DataFrame(rows)
+    except Exception as e:
+        print(f"  [NHL/ESPN gamelog] player {player_id}: {e}")
+        return pd.DataFrame()
+
+
+def get_player_game_log(player_id: int,
+                         season: str = CURRENT_SEASON,
+                         game_type: int = 2) -> pd.DataFrame:
+    """
+    Fetch per-game stats for a player.
+    season: NHL format "20252026" or ESPN year "2026"
+    Tries ESPN first, falls back to NHL CDN.
+    """
+    # Convert NHL season format to ESPN year
+    if len(season) == 8:  # "20252026"
+        espn_year = int(season[4:])
+    else:
+        espn_year = int(season)
+
+    df = _espn_player_gamelog(player_id, espn_year)
+    if not df.empty:
+        return df
+
+    # Fallback: NHL CDN (sometimes works)
+    cache_key = f"gamelog_cdn_{player_id}_{season}_{game_type}"
+    cached = _load_cache(cache_key, 60 * 4)
+    if cached:
+        return pd.DataFrame(cached)
+
+    data = _get_cdn(f"/player/{player_id}/game-log/{season}/{game_type}")
     rows = []
     for g in data.get("gameLog", []):
+        try:
+            toi = g.get("toi","0:00")
+            mins, secs = (toi.split(":") + ["0"])[:2]
+            toi_sec = int(mins)*60 + int(secs)
+        except Exception:
+            toi_sec = 0
         rows.append({
-            "player_id":    player_id,
-            "game_id":      g.get("gameId"),
-            "game_date":    g.get("gameDate"),
-            "team":         g.get("teamAbbrev"),
-            "opponent":     g.get("opponentAbbrev"),
-            "home_road":    g.get("homeRoadFlag"),   # "H" or "R"
-            "goals":        g.get("goals", 0),
-            "assists":      g.get("assists", 0),
-            "points":       g.get("points", 0),
-            "shots":        g.get("shots", 0),
-            "toi_seconds":  _parse_toi(g.get("toi", "0:00")),
-            "pim":          g.get("pim", 0),
-            "plus_minus":   g.get("plusMinus", 0),
-            "pp_goals":     g.get("powerPlayGoals", 0),
-            "pp_points":    g.get("powerPlayPoints", 0),
-            "sh_goals":     g.get("shortHandedGoals", 0),
-            "scored_goal":  1 if g.get("goals", 0) > 0 else 0,
+            "player_id":  player_id,
+            "game_date":  g.get("gameDate",""),
+            "goals":      int(g.get("goals",0)),
+            "assists":    int(g.get("assists",0)),
+            "points":     int(g.get("points",0)),
+            "plus_minus": int(g.get("plusMinus",0)),
+            "shots":      int(g.get("shots",0)),
+            "toi_seconds":toi_sec,
+            "home_road":  g.get("homeRoadFlag","H"),
+            "opponent":   g.get("opponentAbbrev",""),
         })
-
     _save_cache(cache_key, rows)
     return pd.DataFrame(rows)
 
 
-def _parse_toi(toi_str: str) -> float:
-    """Convert 'MM:SS' to seconds (float)."""
-    try:
-        parts = str(toi_str).split(":")
-        return int(parts[0]) * 60 + int(parts[1])
-    except Exception:
-        return 0.0
-
-
-# ── Bulk Game Log Fetching ────────────────────────────────────────────────────
-
-def fetch_all_game_logs(player_ids: list[int],
+def fetch_all_game_logs(player_ids: list,
                          season: str = CURRENT_SEASON,
                          prior_seasons: int = 2,
-                         delay: float = 0.25) -> pd.DataFrame:
-    """
-    Fetch game logs for a list of player IDs.
-    Includes current season + prior seasons for richer model training.
-    More data = better separation of true scorers from small-sample noise.
-    Returns combined DataFrame sorted by player and date.
-    """
-    # Build list of seasons to fetch: current + N prior
+                         delay: float = 0.3) -> pd.DataFrame:
+    """Fetch game logs for all players, current + prior seasons."""
     def _prev(s: str) -> str:
         start = int(s[:4]) - 1
         return f"{start}{start+1}"
 
-    seasons_to_fetch = [season]
+    seasons = [season]
     s = season
     for _ in range(prior_seasons):
         s = _prev(s)
-        seasons_to_fetch.append(s)
+        seasons.append(s)
 
     frames = []
     for pid in player_ids:
-        for szn in seasons_to_fetch:
+        for szn in seasons:
             try:
                 df = get_player_game_log(pid, szn)
                 if not df.empty:
-                    df["season"] = szn  # track which season each row is from
+                    df["season"] = szn
                     frames.append(df)
             except Exception as e:
-                print(f"[GameLog] Player {pid} season {szn} error: {e}")
+                print(f"  [NHL] Player {pid} season {szn}: {e}")
             time.sleep(delay)
 
-    if frames:
-        combined = pd.concat(frames, ignore_index=True)
-        combined["game_date"] = pd.to_datetime(combined["game_date"])
-        combined = combined.sort_values(["player_id", "game_date"]).reset_index(drop=True)
-        return combined
-    return pd.DataFrame()
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined["game_date"] = pd.to_datetime(combined["game_date"], errors="coerce")
+    combined = combined.dropna(subset=["game_date"])
+    return combined.sort_values(["player_id","game_date"]).reset_index(drop=True)
 
 
-# ── Season-level skater stats (for quick reference) ───────────────────────────
+# ── Goalies ───────────────────────────────────────────────────────────────────
 
-def get_skater_stats_leaders(category: str = "goals", limit: int = 100) -> list[dict]:
-    """Fetch current season stat leaders (goals, assists, points, etc.)."""
-    cache_key = f"leaders_{category}_{CURRENT_SEASON}"
-    cached = _load_cache(cache_key, max_age_minutes=240)
+def get_goalie_stats() -> dict:
+    """
+    Returns {team_abbrev: save_pct} for each team's likely starter.
+    Uses ESPN team stats endpoint.
+    """
+    cached = _load_cache("goalie_stats", 60 * 6)
     if cached:
         return cached
 
-    data = _get(f"/skater-stats-leaders/{CURRENT_SEASON}/{SEASON_TYPE}",
-                params={"categories": category, "limit": limit})
-    leaders = []
-    for item in data.get(category, []):
-        p = item.get("player", {})
-        leaders.append({
-            "player_id":   p.get("id"),
-            "player_name": f"{p.get('firstName',{}).get('default','')} {p.get('lastName',{}).get('default','')}",
-            "team":        p.get("teamAbbrevs", ""),
-            "position":    p.get("position", ""),
-            category:      item.get("value"),
-        })
-
-    _save_cache(cache_key, leaders)
-    return leaders
-
-
-# ── Goalie stats ──────────────────────────────────────────────────────────────
-
-def get_goalie_stats() -> pd.DataFrame:
-    """Fetch save percentage and GAA for all current-season goalies."""
-    cache_key = f"goalies_{CURRENT_SEASON}"
-    cached = _load_cache(cache_key, max_age_minutes=240)
-    if cached:
-        return pd.DataFrame(cached)
-
-    data = _get(f"/goalie-stats-leaders/{CURRENT_SEASON}/{SEASON_TYPE}",
-                params={"categories": "savePctg", "limit": 60})
-
-    rows = []
-    for item in data.get("savePctg", []):
-        p = item.get("player", {})
-        rows.append({
-            "player_id":   p.get("id"),
-            "goalie_name": f"{p.get('firstName',{}).get('default','')} {p.get('lastName',{}).get('default','')}",
-            "team":        p.get("teamAbbrevs", ""),
-            "save_pct":    item.get("value", 0.900),
-        })
-
-    # Also fetch GAA
-    data2 = _get(f"/goalie-stats-leaders/{CURRENT_SEASON}/{SEASON_TYPE}",
-                 params={"categories": "goalsAgainstAverage", "limit": 60})
-    gaa_map = {}
-    for item in data2.get("goalsAgainstAverage", []):
-        p = item.get("player", {})
-        pid = p.get("id")
-        gaa_map[pid] = item.get("value", 3.0)
-
-    for row in rows:
-        row["gaa"] = gaa_map.get(row["player_id"], 3.0)
-
-    _save_cache(cache_key, rows)
-    return pd.DataFrame(rows)
-
-
-def get_team_goalie_quality() -> dict:
-    """
-    Returns a dict mapping team_abbrev → avg_save_pct for all goalies on that team.
-    Used as a feature: facing a bad goalie = higher goal probability.
-    """
-    df = get_goalie_stats()
-    if df.empty:
-        return {}
-    # Normalise team column (may be comma-separated if traded)
-    team_sv = {}
-    for _, row in df.iterrows():
-        for team in str(row["team"]).split(","):
-            team = team.strip()
-            if team not in team_sv:
-                team_sv[team] = []
-            team_sv[team].append(row["save_pct"])
-    return {t: sum(v) / len(v) for t, v in team_sv.items()}
-
-
-# ── Injuries & scratches ──────────────────────────────────────────────────────
-
-def get_team_injuries(team_abbrev: str) -> set:
-    """
-    Returns player_ids to exclude: injured, IR, LTIR, or inactive.
-    Uses the NHL roster API + checks both injuryStatus and rosterStatus fields.
-    Cache TTL is 30 min so moves within a day are caught quickly.
-    """
-    cache_key = f"injuries_{team_abbrev}"
-    cached = _load_cache(cache_key, max_age_minutes=15)   # short TTL — injuries move fast
-    if cached is not None:
-        return set(cached)
-
-    injured_ids = set()
-    data = _get(f"/roster/{team_abbrev}/current")
-
-    # Terms that indicate a player is unavailable
-    UNAVAILABLE_TERMS = {
-        "IR", "LTIR", "IR-NR", "10-DAY-DL", "60-DAY-DL",
-        "INJURED", "DTD", "DAY-TO-DAY", "OUT", "SUSPENDED",
-        "CONDITIONING", "RECALL", "REASSIGNED",
-    }
-    # Terms that explicitly mean active — anything else is flagged
-    ACTIVE_TERMS = {"", "ACTIVE", "OK", "NONE", "AVAILABLE", "ACT", "NONE"}
-
-    for group in ("forwards", "defensemen", "goalies"):
-        for p in data.get(group, []):
-            pid   = p.get("id")
-            fname = p.get("firstName", {}).get("default", "")
-            lname = p.get("lastName", {}).get("default", "")
-
-            is_injured = False
-
-            # active=False is the most reliable signal
-            if p.get("active") is False:
-                is_injured = True
-
-            # Check all status fields
-            for field in ("injuryStatus", "status", "statusCode", "rosterStatus"):
-                val = str(p.get(field, "") or "").upper().strip()
-                # Flag if explicitly unavailable
-                if val in UNAVAILABLE_TERMS:
-                    is_injured = True
+    result = {}
+    teams = _get_espn_teams()
+    for team in teams:
+        tid   = team.get("id")
+        abbr  = team.get("abbreviation","")
+        data  = _get_espn(f"teams/{tid}", {"enable": "roster"})
+        # Look for goalies in roster
+        for group in data.get("athletes",[]):
+            items = group.get("items",[]) if isinstance(group,dict) else []
+            for p in items:
+                if p.get("position",{}).get("abbreviation","") == "G":
+                    stats = p.get("statistics",{}).get("splits",{})
+                    svpct = stats.get("categories",[{}])[0].get("stats",[{}])
+                    # Try to extract save percentage
+                    for s in svpct:
+                        if s.get("name","").lower() in ("savepctg","savepct","sv%"):
+                            result[abbr] = float(s.get("value", 0.910))
+                            break
                     break
-                # Flag if non-empty and not an active term
-                if val and val not in ACTIVE_TERMS:
-                    is_injured = True
-                    break
+        time.sleep(DELAY)
 
-            if is_injured:
-                injured_ids.add(pid)
-                print(f"[Injuries] Excluding {fname} {lname} ({team_abbrev})")
+    if not result:
+        # Fall back to league average
+        result = {}
 
-    _save_cache(cache_key, list(injured_ids))
-    return injured_ids
-
-
-def get_confirmed_starting_goalies(games: list[dict]) -> dict:
-    """
-    Fetch the confirmed starting goalie for each game from the NHL gamecenter API.
-    Returns {team_abbrev: save_pct} for every team playing today.
-
-    The landing endpoint exposes the starting goalie under teamGameStats.
-    Falls back to season team average if the starter isn't yet confirmed
-    (typically confirmed 1-2 hours before puck drop).
-
-    This is the most important goalie feature — facing a backup (.890)
-    vs a starter (.920) is a 3x difference in expected extra goals conceded.
-    """
-    cache_key = f"starting_goalies_{'_'.join(str(g.get('game_id','')) for g in games)}"
-    cached = _load_cache(cache_key, max_age_minutes=30)
-    if cached:
-        return cached
-
-    # First get season save% for every goalie so we can look up the starter's rate
-    goalie_df = get_goalie_stats()
-    goalie_sv = {}   # player_id → save_pct
-    goalie_names = {}
-    if not goalie_df.empty and "player_id" in goalie_df.columns:
-        for _, row in goalie_df.iterrows():
-            goalie_sv[row["player_id"]]    = float(row.get("save_pct", 0.910))
-            goalie_names[row["player_id"]] = str(row.get("goalie_name", ""))
-
-    team_avg = get_team_goalie_quality()  # fallback
-    result   = {}
-
-    for game in games:
-        gid  = game.get("game_id")
-        away = game.get("away_team", "")
-        home = game.get("home_team", "")
-        if not gid:
-            continue
-
-        try:
-            data = _get(f"/gamecenter/{gid}/landing")
-            if not data:
-                raise ValueError("Empty response")
-
-            for side_key, team_abbrev in [("homeTeam", home), ("awayTeam", away)]:
-                team_data = data.get(side_key, {})
-
-                # Primary: look for startingGoalie in teamGameStats
-                starter_id = None
-                starter_sv = None
-
-                # The landing page puts the starting goalie in the game header
-                # under teamGameStats or directly in the team block
-                tgs = team_data.get("teamGameStats", {})
-
-                # Check for goalie info in the starting lineup
-                for goalie in team_data.get("goalies", []):
-                    if goalie.get("starter", False) or goalie.get("starting", False):
-                        starter_id = goalie.get("playerId") or goalie.get("id")
-                        break
-
-                # If not explicitly marked, take the first goalie listed
-                if not starter_id:
-                    goalies = team_data.get("goalies", [])
-                    if goalies:
-                        starter_id = goalies[0].get("playerId") or goalies[0].get("id")
-
-                if starter_id and starter_id in goalie_sv:
-                    starter_sv = goalie_sv[starter_id]
-                    starter_nm = goalie_names.get(starter_id, f"ID:{starter_id}")
-                    print(f"  [NHL] Starting goalie {team_abbrev}: {starter_nm} "
-                          f"(sv%={starter_sv:.3f})")
-                    result[team_abbrev] = starter_sv
-                else:
-                    # Fall back to team season average
-                    result[team_abbrev] = team_avg.get(team_abbrev, 0.910)
-
-        except Exception as e:
-            # On error, use team season average for both teams in this game
-            result[away] = team_avg.get(away, 0.910)
-            result[home] = team_avg.get(home, 0.910)
-
-    # Fill any teams not yet confirmed with their season average
-    for game in games:
-        for team in (game.get("away_team",""), game.get("home_team","")):
-            if team and team not in result:
-                result[team] = team_avg.get(team, 0.910)
-
-    if result:
-        _save_cache(cache_key, result)
+    _save_cache("goalie_stats", result)
     return result
 
 
-
+def get_goalie_matchup(home_abbrev: str,
+                        away_abbrev: str,
+                        game_id: str = None) -> dict:
     """
-    Fetch the confirmed lineup (scratches + healthy scratches) for a specific game.
-    Uses /v1/gamecenter/{game_id}/play-by-play which includes lineup info,
-    or falls back to /v1/gamecenter/{game_id}/landing for pre-game lineups.
-
-    Returns a set of player_ids confirmed as ACTIVE (in lineup).
-    Empty set means lineup not yet available — don't filter in that case.
+    Returns {home_save_pct, away_save_pct, home_starter, away_starter}.
+    Falls back to league average (0.910) if data unavailable.
     """
-    cache_key = f"lineup_{game_id}_{team_abbrev}"
-    cached = _load_cache(cache_key, max_age_minutes=30)
+    LEAGUE_AVG = 0.910
+    goalie_stats = get_goalie_stats()
+    return {
+        "home_save_pct": goalie_stats.get(home_abbrev, LEAGUE_AVG),
+        "away_save_pct": goalie_stats.get(away_abbrev, LEAGUE_AVG),
+        "home_starter":  "TBD",
+        "away_starter":  "TBD",
+    }
+
+
+# ── Game results (for backtest) ───────────────────────────────────────────────
+
+def get_game_results(date_str: str) -> dict:
+    """
+    Returns {player_id: {goals, shots, assists}} for a past date.
+    Used by backtest — tries ESPN summary endpoint per game.
+    """
+    games = get_nhl_schedule(date_str)
+    results = {}
+    for game in games:
+        gid = game.get("game_id")
+        if not gid:
+            continue
+        data = _get_espn("summary", {"event": gid})
+        for team_data in data.get("boxscore",{}).get("players",[]):
+            for grp in team_data.get("statistics",[]):
+                labels = [k.lower() for k in grp.get("keys",
+                          grp.get("labels", grp.get("names",[])))]
+                def _idx(name, default):
+                    try: return labels.index(name)
+                    except ValueError: return default
+                i_g = _idx("g",  _idx("goals",  0))
+                i_a = _idx("a",  _idx("assists", 1))
+                i_s = _idx("sog",_idx("shots",   12))
+                for athlete in grp.get("athletes",[]):
+                    pid   = athlete.get("athlete",{}).get("id")
+                    stats = athlete.get("stats",[])
+                    if not pid or not stats:
+                        continue
+                    try:
+                        results[int(pid)] = {
+                            "goals":   int(float(stats[i_g])) if i_g<len(stats) else 0,
+                            "assists": int(float(stats[i_a])) if i_a<len(stats) else 0,
+                            "shots":   int(float(stats[i_s])) if i_s<len(stats) else 0,
+                        }
+                    except (ValueError, IndexError):
+                        pass
+        time.sleep(DELAY)
+    return results
+
+
+# ── Injuries / unavailable ────────────────────────────────────────────────────
+
+def get_team_injuries(team_abbrev: str) -> list:
+    """Return list of injured player names for a team."""
+    cached = _load_cache(f"injuries_{team_abbrev}", max_age_minutes=15)
     if cached is not None:
-        return set(cached) if cached else set()
+        return cached
 
-    active_ids = set()
+    teams = _get_espn_teams()
+    team  = next((t for t in teams
+                  if t.get("abbreviation","").upper()==team_abbrev.upper()), None)
+    if not team:
+        return []
 
-    # Try landing page first (pre-game and live lineups)
-    data = _get(f"/gamecenter/{game_id}/landing")
-    if not data:
+    data  = _get_espn(f"teams/{team['id']}/injuries")
+    names = []
+    for inj in data.get("injuries", []):
+        name = inj.get("athlete",{}).get("fullName","")
+        if name:
+            names.append(name)
+
+    _save_cache(f"injuries_{team_abbrev}", names)
+    return names
+
+
+def get_unavailable_players(team_abbrev: str) -> set:
+    """Return set of player names unavailable tonight."""
+    try:
+        return set(get_team_injuries(team_abbrev))
+    except Exception:
         return set()
 
-    # matchup → teamGameStats has skaters
-    for side in ("homeTeam", "awayTeam"):
-        team = data.get(side, {})
-        if team.get("abbrev", "") != team_abbrev:
-            continue
-        for skater in team.get("skaters", []):
-            active_ids.add(skater.get("playerId") or skater.get("id"))
-        for scratch in team.get("scratches", []):
-            # Remove scratches from active
-            sid = scratch.get("playerId") or scratch.get("id")
-            active_ids.discard(sid)
 
-    if active_ids:
-        print(f"[Lineup] {team_abbrev} game {game_id}: {len(active_ids)} active skaters confirmed")
-        _save_cache(cache_key, list(active_ids))
+# ── NST / Natural Stat Trick (advanced stats) ─────────────────────────────────
+# These endpoints are fetched by nst_scraper.py separately.
+# Kept here as stubs so imports don't break.
 
-    return active_ids
-
-
-def get_unavailable_players(teams_and_games: list[dict]) -> set:
-    """
-    Return player_ids to exclude: on IR/LTIR by roster API, or absent from
-    the active roster (players not listed at all are already excluded by
-    fetch_rosters using the active roster endpoint).
-    """
-    unavailable = set()
-    all_teams   = set()
-    for g in teams_and_games:
-        all_teams.add(g.get("away_team", ""))
-        all_teams.add(g.get("home_team", ""))
-
-    for team in all_teams:
-        if not team:
-            continue
-        try:
-            injured = get_team_injuries(team)
-            unavailable.update(injured)
-        except Exception as e:
-            print(f"[Injuries] Could not check {team}: {e}")
-
-    # Also check LTIR roster explicitly — some APIs have a separate injured list
+def get_all_situations_stats(season: str) -> pd.DataFrame:
     try:
-        for team in all_teams:
-            if not team:
-                continue
-            data = _get(f"/roster/{team}/current")
-            # LTIR players sometimes appear in a separate 'injured' group
-            for p in data.get("injured", []):
-                pid = p.get("id")
-                if pid:
-                    unavailable.add(pid)
-                    fname = p.get("firstName", {}).get("default", "")
-                    lname = p.get("lastName", {}).get("default", "")
-                    print(f"[Injuries] LTIR: {fname} {lname} ({team})")
+        from nst_scraper import get_all_situations_stats as _f
+        return _f(season)
     except Exception:
-        pass
+        return pd.DataFrame()
 
-    print(f"[Injuries] Total excluded: {len(unavailable)} players")
-    return unavailable
+
+# ── Legacy aliases (nhl_pipeline.py compatibility) ────────────────────────────
+
+def _get(endpoint: str, params: dict = None) -> dict:
+    """Legacy shim — try ESPN first, fall back to CDN."""
+    data = _get_espn(endpoint, params)
+    if data:
+        return data
+    return _get_cdn(endpoint)
